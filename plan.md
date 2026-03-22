@@ -1,4 +1,4 @@
-# Comprehensive Plan & Design Brief: Online Texas Hold'em Game (Version 1)
+# Comprehensive Plan & Design Brief: Online Texas Hold'em Game (Version 2 - Revised)
 
 ---
 
@@ -16,13 +16,18 @@ The goal is to build a modern, accessible poker platform that combines clean aes
 - **Simple Access**: No account required - players can immediately join or create games
 - **Unique Matchmaking**: Games identified by unique codes that players can share
 - **Responsive**: Works on both desktop and mobile browsers
+- **Correct Gameplay**: The engine must be bug-free before building the online platform
 
 ### Core Requirements
-1. Use the existing C# Texas Hold'em game engine as the backend logic core
+1. Use the existing C# Texas Hold'em game engine as the backend logic core (AFTER fixing critical bugs)
 2. Implement real-time multiplayer gameplay via WebSockets
 3. Create an intuitive UI with the layout: top = player avatars/chips, middle = community cards, bottom = user's hand + controls
 4. Support up to 6 players per game
 5. Host-controlled game settings (starting chip amount)
+
+### Important: Engine Audit Findings
+
+> ⚠️ **CRITICAL**: A code audit of the forked game engine revealed **7 critical bugs** that must be fixed BEFORE building the online platform. See Section 2.3 for details.
 
 ---
 
@@ -55,6 +60,31 @@ The engine uses these callback interfaces that will need WebSocket adaptation:
 - `IPlayer.StartRound(IStartRoundContext)` - Community cards dealt
 - `IPlayer.EndRound(IEndRoundContext)` - Round ends
 - `IPlayer.EndHand(IEndHandContext)` - Showdown results
+
+---
+
+### 2.3 Critical Engine Bugs (MUST FIX BEFORE BUILDING)
+
+⚠️ **A code audit revealed 7 critical bugs in the game engine that must be fixed before building the online platform:**
+
+| # | Bug | File | Impact |
+|---|-----|------|--------|
+| 1 | **Full house evaluation can exceed 5 cards** | `HandEvaluator.cs:70-98` | Runtime crash (`BestHand` constructor throws) for certain 7-card combinations with two three-of-a-kind groups plus a pair |
+| 2 | **Multi-player showdown ranking is broken** | `Helpers.cs:39-60` | `GetHandRankValue` uses relative opponent-count scoring, not absolute hand comparison. Two players with identical hands get different scores and don't split the pot correctly |
+| 3 | **Integer division loses chips on split pots** | `HandLogic.cs:164` | `pot / count` truncates. A 101-chip pot split 2 ways gives 50 each; 1 chip vanishes permanently. Money leaks every split hand |
+| 4 | **Heads-up showdown ignores side pots** | `HandLogic.cs:100-117` | 2-player path gives entire `pot` to winner, ignoring main/side pot structure. All-in for less than opponent's bet is not handled |
+| 5 | **Infinite game loop** | `TexasHoldemGame.cs:116-141` | `Rebuy()` restores busted players after every hand, so `WithMoney().Count() > 1` is always true. The game never terminates |
+| 6 | **Constructor validates after delegation** | `TexasHoldemGame.cs:22-40` | Null checks run after the private constructor has already iterated the collection. Null player causes `NullReferenceException` instead of the intended `ArgumentNullException` |
+| 7 | **Mutable shared singleton actions** | `PlayerAction.cs` | `Fold()` and `CheckOrCall()` return shared static instances, but `Money` has an `internal set`. Any mutation corrupts the singleton for all future uses |
+
+**Additional important issues:**
+- Blind posting can index out-of-bounds with 2 active players from a larger game
+- No raise amount validation (TODO in code)
+- Blind escalation is commented out
+- `Pot` struct default has null `ActivePlayer` list
+- Inconsistent default buy-in between constructors (1000 vs 200)
+
+> **⚠️ ACTION REQUIRED:** Fix bugs #1-#5 and add money-conservation invariant tests before Phase 1. This is NOT optional - these bugs produce wrong game results.
 
 ---
 
@@ -95,7 +125,8 @@ The engine uses these callback interfaces that will need WebSocket adaptation:
 
 | Component | Recommended | Cost | Reasoning |
 |-----------|------------|------|-----------|
-| **Frontend Framework** | React 18+ or Vue.js 3 | FREE | Open source, responsive UI, component-based |
+| **Frontend Framework** | **React 18+** | FREE | Larger ecosystem for poker UI components, better TypeScript integration with SignalR client |
+| **State Management** | **Zustand** | FREE | Simpler than Redux for real-time game state; less boilerplate |
 | **Game Rendering** | CSS3 + Framer Motion | FREE* | Smooth card animations; Framer Motion has generous free tier |
 | **Real-time Communication** | SignalR (Backend) | FREE | Native C#; built into ASP.NET Core |
 | **Backend Server** | ASP.NET Core 8.0 | FREE | Open source, native C# game engine integration |
@@ -104,6 +135,24 @@ The engine uses these callback interfaces that will need WebSocket adaptation:
 | **Deployment** | Render.com / Railway / Coolify | FREE-$5/mo | Affordable self-hosted options |
 
 *Framer Motion is free for commercial use with attribution
+
+### ⚠️ CRITICAL: The Sync-to-Async Challenge
+
+> ⚠️ **This is the #1 architectural challenge in the entire project.** The original plan allocated ONE task line to "Bridge IPlayer interface to SignalR." This is insufficient.
+
+**The Problem:**
+- The game engine's `TexasHoldemGame.Start()` runs a **synchronous blocking loop**
+- Inside each hand, `BettingLogic.Bet()` calls `player.GetTurn()` **synchronously and blocks** until it returns
+- For a web game, you need: send "your turn" → **wait asynchronously** for WebSocket response → resume
+
+**Two Approaches:**
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| **(A) Async Rewrite** | Clean architecture, scalable | More work upfront |
+| **(B) TaskCompletionSource Bridge** | Faster to ship | Blocks threads, limited scale |
+
+**Recommended Action:** Prototype both in Phase 0 and decide before Phase 1.
 
 ### 3.3 Deployment & Infrastructure (Budget-Friendly)
 
@@ -291,9 +340,65 @@ Based on the reference screenshots, the game uses a **minimalist vertical layout
 
 ---
 
-## 5. DEVELOPMENT PHASES
+## 5. DEVELOPMENT PHASES (Revised Timeline: 18 weeks)
 
-### PHASE 1: Foundation & Backend Core (Weeks 1-3)
+### PHASE 0: Engine Fixes & Architecture (Weeks 1-2) -- **NEW**
+
+⚠️ **This phase is MANDATORY before any other work.**
+
+**Objectives:**
+- Fix critical bugs in the game engine
+- Replace insecure random with CSPRNG
+- Prototype sync-to-async bridge
+- Define API contract (shared between frontend/backend)
+- Start continuous testing
+
+**Deliverables:**
+- [ ] Fixed game engine (bugs #1-7)
+- [ ] CSPRNG for card dealing
+- [ ] Money-conservation invariant tests
+- [ ] Sync-to-async prototype (both approaches)
+- [ ] API contract document
+- [ ] Integration tests from day 1
+
+**Technical Tasks:**
+```
+0.1 Fix critical bugs:
+    - Full house > 5 cards crash (HandEvaluator.cs)
+    - Multi-player showdown ranking (Helpers.cs)
+    - Integer division chip loss (HandLogic.cs)
+    - Heads-up side pot handling (HandLogic.cs)
+    - Infinite game loop (TexasHoldemGame.cs)
+    - Constructor validation order (TexasHoldemGame.cs)
+    - Mutable singleton actions (PlayerAction.cs)
+
+0.2 Replace System.Random with CSPRNG:
+    - Use System.Security.Cryptography.RandomNumberGenerator
+    - Update RandomProvider.cs
+
+0.3 Disable auto-rebuy:
+    - Players bust out when they hit 0
+    - Game terminates when 1 player remains
+
+0.4 Prototype sync-to-async bridge:
+    - Approach A: Async event-driven rewrite
+    - Approach B: TaskCompletionSource + dedicated thread
+    - Prototype both, evaluate tradeoffs
+
+0.5 Define API contract:
+    - Document all SignalR hub methods
+    - Document game state structure
+    - Share with frontend team
+
+0.6 Add integration tests:
+    - Test full hand flow
+    - Test split pot scenarios
+    - Test all-in edge cases
+```
+
+---
+
+### PHASE 1: Foundation & Backend Core (Weeks 3-5)
 
 **Objectives:**
 - Set up ASP.NET Core project with SignalR
@@ -332,7 +437,7 @@ Based on the reference screenshots, the game uses a **minimalist vertical layout
 
 ---
 
-### PHASE 2: Real-Time Gameplay (Weeks 4-6)
+### PHASE 2: Real-Time Gameplay (Weeks 6-8)
 
 **Objectives:**
 - Full game state synchronization
@@ -592,15 +697,29 @@ Room Data:
 ## 8. SECURITY CONSIDERATIONS
 
 1. **Server-authoritative game state** - All decisions validated server-side
-2. **Card dealing** - Use cryptographically secure random from game engine
+2. **Card dealing** - Replace System.Random with CSPRNG (CRITICAL)
 3. **Rate limiting** - Prevent action spam on WebSocket
 4. **Input validation** - Sanitize all player inputs
-5. **SQL injection** - Use parameterized queries
-6. **XSS prevention** - Sanitize chat messages
+5. **Room code brute-force** - Add rate limiting on join attempts
+6. **XSS prevention** - Sanitize display names and chat messages
+7. **CORS / origin validation** - Validate WebSocket origins
 
 ---
 
-## 9. OPEN QUESTIONS FOR CLARIFICATION
+## 9. TOP RISKS & MITIGATION
+
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| **Sync-to-async bridge complexity** | HIGH | Prototype in Phase 0, choose simpler approach if needed |
+| **Engine correctness bugs** | CRITICAL | Fix all 7 bugs in Phase 0 before building |
+| **Server restart = data loss** | HIGH | Accept for v1; add Redis in v2 |
+| **Race conditions in betting** | HIGH | Add locking around game state mutations |
+| **Host disconnection** | MEDIUM | Auto-close room if host disconnects |
+| **Concurrent room mutations** | HIGH | Add thread-safety to RoomManager |
+
+---
+
+## 10. OPEN QUESTIONS FOR CLARIFICATION
 
 Before proceeding to implementation, please confirm:
 
@@ -615,7 +734,7 @@ Before proceeding to implementation, please confirm:
 
 ---
 
-## 10. NEXT STEPS
+## 11. NEXT STEPS
 
 Once you confirm the above details, I can:
 
