@@ -8,24 +8,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Build the entire solution
 dotnet build src/TexasHoldem.sln
 
-# Run all tests
+# Run all tests (engine + API)
 dotnet test src/TexasHoldem.sln
 
-# Run a specific test class or method
-dotnet test src/Tests/TexasHoldem.Logic.Tests/ --filter "FullyQualifiedName~HandEvaluatorTests"
+# Run only the API backend tests
+dotnet test src/Tests/PokerGame.Api.Tests/
 
-# Run only the unit tests (not simulations)
+# Run only the engine unit tests
 dotnet test src/Tests/TexasHoldem.Logic.Tests/
+
+# Run a specific test class or method
+dotnet test src/Tests/PokerGame.Api.Tests/ --filter "FullyQualifiedName~RoomManagerTests"
+
+# Run the API server (default: http://localhost:5000)
+dotnet run --project src/PokerGame.Api/
 
 # Run the console UI
 dotnet run --project src/UI/TexasHoldem.UI.Console/
 ```
 
+Note: On ARM64 Macs, .NET 8 is installed via Homebrew at `/opt/homebrew/opt/dotnet@8/libexec`. Set `DOTNET_ROOT` if `dotnet` is not in PATH.
+
 StyleCop.Analyzers is enforced across all projects via `src/Rules.ruleset` and `src/Settings.StyleCop`. Build warnings from StyleCop violations will block the CI pipeline.
 
 ## Architecture
 
-The solution is structured into four layers:
+The solution is structured into five layers:
 
 ### Core engine: `TexasHoldem.Logic` (netstandard2.0)
 Published as a NuGet package (`TexasHoldemGameEngine`). Contains all game mechanics:
@@ -41,7 +49,15 @@ Published as a NuGet package (`TexasHoldemGameEngine`). Contains all game mechan
 ### Console UI: `TexasHoldem.UI.Console` (netcoreapp3.1)
 `ConsoleUiDecorator` wraps any `IPlayer` via the decorator pattern to render that player's box to a fixed console layout. `ConsolePlayer` enables a human to play interactively. `Program.Main` hardcodes the player lineup and console dimensions.
 
+### Web API: `PokerGame.Api` (net8.0) -- Phase 1
+ASP.NET Core 8.0 backend with SignalR for real-time multiplayer:
+- **`Hubs/GameHub.cs`** — SignalR hub handling room management (create/join/leave/kick), game control (start, submit action), and connection lifecycle (disconnect auto-folds).
+- **`Services/RoomManager.cs`** — Thread-safe in-memory room management with 6-char room codes. Tracks players by ID, room code, and SignalR connection ID via three synchronized dictionaries.
+- **`Services/GameEngineWrapper.cs`** — Bridges `TexasHoldemGame` to SignalR using `TcsPlayer`. Creates per-room `ActiveGame` state, wires TcsPlayer events to `Action<>` delegates, and syncs engine state back to room sessions.
+- **`DTOs/`** — `GameStateDto`, `PlayerInfoDto`, `CardDto`, `YourTurnDto`, `LobbyStateDto`, etc. Serialized as JSON over SignalR.
+
 ### Tests: `src/Tests/`
+- **`PokerGame.Api.Tests`** (xunit, net8.0) — Unit tests for RoomManager (22 tests covering create, join, leave, connection mapping, edge cases).
 - **`TexasHoldem.Logic.Tests`** (xunit + Moq) — Unit tests for cards, hand evaluation, game mechanics, and betting rules.
 - **`TexasHoldem.Tests.GameSimulations`** — Console app that runs full game simulations (e.g., SmartPlayer vs AlwaysCallPlayer) and prints win statistics.
 
@@ -97,3 +113,43 @@ Phase 0 fixed 7 critical bugs and added the async bridge prototype. See `docs/su
 - Timeout (default 30s) → auto-folds
 - Events: `TurnRequested`, `HandStarted`, `RoundStarted`, `HandEnded`
 - Implements `IDisposable` (disposes `ManualResetEventSlim`)
+
+## Phase 1 Changes (Backend Foundation)
+
+Phase 1 added the ASP.NET Core backend with SignalR real-time communication. See `PHASE1_PLAN.md` for the full plan and review amendments.
+
+### Architecture: How the Backend Works
+1. **Client connects** to `/gamehub` via SignalR WebSocket.
+2. **Room lifecycle**: `CreateRoom` → returns 6-char code. `JoinRoom(code)` → joins SignalR group. Host calls `StartGame`.
+3. **Game loop**: `GameEngineWrapper.StartGameAsync` creates `TcsPlayer` per player, runs `TexasHoldemGame.Start()` on a background thread. The engine blocks on `TcsPlayer.GetTurn()` until the client submits an action via `SubmitAction`.
+4. **State sync**: TcsPlayer events (`HandStarted`, `RoundStarted`, `TurnRequested`, `HandEnded`) fire on the engine thread, update room session state, and broadcast `GameStateDto` to all clients via SignalR group.
+5. **Turn timeout**: TcsPlayer's built-in 30s timeout auto-folds. No separate timer in the wrapper.
+
+### Key Design Decisions
+- **Single solution**: `PokerGame.Api` and `PokerGame.Api.Tests` were added to the existing `TexasHoldem.sln` rather than creating a new solution.
+- **Action parsing by string**: `SubmitAction` accepts string action types ("Fold", "Check", "Call", "Raise", "AllIn") rather than the engine's `PlayerActionType` enum, since the enum has no AllIn value. AllIn is handled as `Raise(int.MaxValue)`.
+- **Per-room game state**: `GameEngineWrapper` uses a nested `ActiveGame` class per room to avoid cross-room state contamination.
+- **CORS for dev**: Uses `SetIsOriginAllowed(_ => true)` + `AllowCredentials()` for SignalR compatibility. Must be restricted for production.
+- **No separate turn timer**: TcsPlayer owns the timeout (30s). The wrapper does not run a competing timer.
+
+### SignalR Hub Methods (API Contract)
+**Client → Server:**
+- `CreateRoom(hostName, emoji, startingChips)` → `RoomCreatedResult`
+- `JoinRoom(roomCode, playerName, emoji)` → `JoinResult`
+- `LeaveRoom()` → void
+- `KickPlayer(targetPlayerId)` → bool
+- `StartGame()` → `ActionResultDto`
+- `SubmitAction(actionType, amount?)` → `ActionResultDto`
+- `GetGameState()` → `GameStateDto`
+- `GetLobbyState()` → `LobbyStateDto`
+
+**Server → Client:**
+- `OnPlayerJoined({ PlayerId, Name, Emoji })`
+- `OnPlayerLeft({ PlayerId })`
+- `OnRoomClosed()`
+- `OnKicked()`
+- `OnGameStateChanged(GameStateDto)`
+- `OnYourTurn(YourTurnDto)`
+- `OnPlayerActing({ PlayerId })`
+- `OnPlayerDisconnected({ PlayerId })`
+- `OnGameEnded({ WinnerPlayerId, HandsPlayed })`

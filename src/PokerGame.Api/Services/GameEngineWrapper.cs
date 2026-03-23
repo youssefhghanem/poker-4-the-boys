@@ -1,0 +1,367 @@
+namespace PokerGame.Api.Services
+{
+    using System;
+    using System.Collections.Concurrent;
+    using System.Collections.Generic;
+    using System.Linq;
+    using System.Threading;
+    using System.Threading.Tasks;
+
+    using PokerGame.Api.DTOs;
+    using TexasHoldem.Logic.Async;
+    using TexasHoldem.Logic.Cards;
+    using TexasHoldem.Logic.GameMechanics;
+    using TexasHoldem.Logic.Players;
+
+    public class GameEngineWrapper : IGameEngineWrapper
+    {
+        // Per-room game state keyed by roomCode
+        private readonly ConcurrentDictionary<string, ActiveGame> activeGames = new ConcurrentDictionary<string, ActiveGame>();
+
+        public event Action<string, GameStateDto>? GameStateChanged;
+
+        public event Action<string, string, YourTurnDto>? PlayerTurnRequested;
+
+        public event Action<string, string, int>? GameEnded;
+
+        public Task StartGameAsync(Room room)
+        {
+            if (room.Players.Count < 2)
+            {
+                return Task.CompletedTask;
+            }
+
+            var gameState = new ActiveGame(room.RoomCode);
+
+            // Create TcsPlayer for each player, keyed by session ID
+            foreach (var session in room.Players)
+            {
+                var tcsPlayer = new TcsPlayer(session.Name, turnTimeoutMs: 30000);
+                gameState.PlayerMap[session.Id] = tcsPlayer;
+                gameState.NameToSessionId[session.Name] = session.Id;
+            }
+
+            // Wire up events
+            foreach (var kvp in gameState.PlayerMap)
+            {
+                var sessionId = kvp.Key;
+                var tcsPlayer = kvp.Value;
+
+                tcsPlayer.TurnRequested += (sender, args) =>
+                {
+                    this.HandleTurnRequested(room, gameState, sessionId, args.Context);
+                };
+
+                tcsPlayer.HandStarted += (sender, args) =>
+                {
+                    this.HandleHandStarted(room, gameState, sessionId, args.Context);
+                };
+
+                tcsPlayer.RoundStarted += (sender, args) =>
+                {
+                    this.HandleRoundStarted(room, gameState, args.Context);
+                };
+
+                tcsPlayer.HandEnded += (sender, args) =>
+                {
+                    this.HandleHandEnded(room, gameState, args.Context);
+                };
+            }
+
+            this.activeGames[room.RoomCode] = gameState;
+
+            // Create the engine game
+            var players = room.Players
+                .Select(s => (IPlayer)gameState.PlayerMap[s.Id])
+                .ToList();
+            var game = new TexasHoldemGame(players, room.StartingChips);
+            gameState.Game = game;
+
+            room.State = RoomState.HandInProgress;
+
+            // Run on a background thread (engine is synchronous/blocking)
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    var winner = game.Start();
+                    room.State = RoomState.GameComplete;
+
+                    var winnerSessionId = gameState.NameToSessionId.GetValueOrDefault(winner.Name, string.Empty);
+                    this.GameEnded?.Invoke(room.RoomCode, winnerSessionId, game.HandsPlayed);
+                }
+                catch (Exception)
+                {
+                    room.State = RoomState.Lobby;
+                    this.activeGames.TryRemove(room.RoomCode, out _);
+                }
+            });
+
+            return Task.CompletedTask;
+        }
+
+        public bool SubmitAction(string playerId, string actionType, int? amount)
+        {
+            var tcsPlayer = this.FindTcsPlayer(playerId);
+            if (tcsPlayer == null)
+            {
+                return false;
+            }
+
+            PlayerAction action;
+            switch (actionType.ToUpperInvariant())
+            {
+                case "FOLD":
+                    action = PlayerAction.Fold();
+                    break;
+                case "CHECK":
+                case "CALL":
+                case "CHECKCALL":
+                    action = PlayerAction.CheckOrCall();
+                    break;
+                case "RAISE":
+                    action = amount.HasValue
+                        ? PlayerAction.Raise(amount.Value)
+                        : PlayerAction.CheckOrCall();
+                    break;
+                case "ALLIN":
+                    // Raise with max amount; the engine will clamp to MoneyLeft
+                    action = PlayerAction.Raise(int.MaxValue);
+                    break;
+                default:
+                    return false;
+            }
+
+            return tcsPlayer.SubmitAction(action);
+        }
+
+        public GameStateDto? GetGameState(string roomCode)
+        {
+            if (!this.activeGames.TryGetValue(roomCode, out var gameState))
+            {
+                return null;
+            }
+
+            return gameState.BuildDto();
+        }
+
+        public void Dispose()
+        {
+            foreach (var game in this.activeGames.Values)
+            {
+                foreach (var player in game.PlayerMap.Values)
+                {
+                    player.Dispose();
+                }
+            }
+
+            this.activeGames.Clear();
+        }
+
+        private TcsPlayer? FindTcsPlayer(string playerId)
+        {
+            foreach (var game in this.activeGames.Values)
+            {
+                if (game.PlayerMap.TryGetValue(playerId, out var player))
+                {
+                    return player;
+                }
+            }
+
+            return null;
+        }
+
+        private void HandleTurnRequested(Room room, ActiveGame gameState, string sessionId, IGetTurnContext context)
+        {
+            gameState.CurrentPlayerToActId = sessionId;
+
+            // Build turn info from engine context
+            var turnInfo = new YourTurnDto
+            {
+                MinRaise = context.MinRaise,
+                MaxRaise = context.MoneyLeft,
+                AmountToCall = context.MoneyToCall,
+                TimeRemaining = 30,
+                AvailableActions = new List<string>(),
+            };
+
+            turnInfo.AvailableActions.Add("Fold");
+            if (context.CanCheck)
+            {
+                turnInfo.AvailableActions.Add("Check");
+            }
+
+            if (context.MoneyToCall > 0)
+            {
+                turnInfo.AvailableActions.Add("Call");
+            }
+
+            if (context.CanRaise)
+            {
+                turnInfo.AvailableActions.Add("Raise");
+            }
+
+            if (context.MoneyLeft > 0)
+            {
+                turnInfo.AvailableActions.Add("AllIn");
+            }
+
+            // Update DTO state
+            gameState.CurrentRound = context.RoundType.ToString();
+            gameState.MainPot = context.CurrentPot;
+            gameState.MinRaise = context.MinRaise;
+
+            // Update the acting player's chip info
+            var session = room.Players.FirstOrDefault(p => p.Id == sessionId);
+            if (session != null)
+            {
+                session.Chips = context.MoneyLeft;
+                session.CurrentBet = context.MyMoneyInTheRound;
+                session.Status = PlayerStatus.Active;
+            }
+
+            this.PlayerTurnRequested?.Invoke(room.RoomCode, sessionId, turnInfo);
+        }
+
+        private void HandleHandStarted(Room room, ActiveGame gameState, string sessionId, IStartHandContext context)
+        {
+            gameState.HandNumber = context.HandNumber;
+            gameState.SmallBlind = context.SmallBlind;
+            gameState.CommunityCards.Clear();
+            gameState.CurrentPlayerToActId = null;
+
+            // Store this player's hole cards
+            gameState.HoleCards[sessionId] = new List<CardDto>
+            {
+                ToCardDto(context.FirstCard),
+                ToCardDto(context.SecondCard),
+            };
+
+            // Update session chip count
+            var session = room.Players.FirstOrDefault(p => p.Id == sessionId);
+            if (session != null)
+            {
+                session.Chips = context.MoneyLeft;
+                session.CurrentBet = 0;
+                session.Status = PlayerStatus.Active;
+            }
+
+            // Broadcast state after all players have received their hand start
+            this.BroadcastState(room.RoomCode, gameState);
+        }
+
+        private void HandleRoundStarted(Room room, ActiveGame gameState, IStartRoundContext context)
+        {
+            gameState.CurrentRound = context.RoundType.ToString();
+            gameState.MainPot = context.CurrentPot;
+            gameState.CommunityCards = context.CommunityCards
+                .Select(ToCardDto)
+                .ToList();
+
+            // Reset current bets for the new round
+            foreach (var session in room.Players)
+            {
+                session.CurrentBet = 0;
+            }
+
+            this.BroadcastState(room.RoomCode, gameState);
+        }
+
+        private void HandleHandEnded(Room room, ActiveGame gameState, IEndHandContext context)
+        {
+            gameState.ShowdownCards = context.ShowdownCards?
+                .ToDictionary(
+                    kvp => gameState.NameToSessionId.GetValueOrDefault(kvp.Key, kvp.Key),
+                    kvp => kvp.Value.Select(ToCardDto).ToList());
+
+            gameState.CurrentPlayerToActId = null;
+
+            this.BroadcastState(room.RoomCode, gameState);
+
+            // Clear hand state for next hand
+            gameState.HoleCards.Clear();
+            gameState.ShowdownCards = null;
+        }
+
+        private void BroadcastState(string roomCode, ActiveGame gameState)
+        {
+            var dto = gameState.BuildDto();
+            this.GameStateChanged?.Invoke(roomCode, dto);
+        }
+
+        private static CardDto ToCardDto(Card card)
+        {
+            return new CardDto
+            {
+                Suit = card.Suit.ToFriendlyString(),
+                Rank = card.Type.ToFriendlyString(),
+                Display = card.ToString(),
+            };
+        }
+
+        /// <summary>
+        /// Holds all mutable state for one active game.
+        /// </summary>
+        private class ActiveGame
+        {
+            public ActiveGame(string roomCode)
+            {
+                this.RoomCode = roomCode;
+            }
+
+            public string RoomCode { get; }
+
+            public TexasHoldemGame? Game { get; set; }
+
+            public ConcurrentDictionary<string, TcsPlayer> PlayerMap { get; }
+                = new ConcurrentDictionary<string, TcsPlayer>();
+
+            public Dictionary<string, string> NameToSessionId { get; }
+                = new Dictionary<string, string>();
+
+            public Dictionary<string, List<CardDto>> HoleCards { get; }
+                = new Dictionary<string, List<CardDto>>();
+
+            public Dictionary<string, List<CardDto>>? ShowdownCards { get; set; }
+
+            public List<CardDto> CommunityCards { get; set; } = new List<CardDto>();
+
+            public string? CurrentPlayerToActId { get; set; }
+
+            public string? CurrentRound { get; set; }
+
+            public int HandNumber { get; set; }
+
+            public int SmallBlind { get; set; } = 10;
+
+            public int MainPot { get; set; }
+
+            public int MinRaise { get; set; }
+
+            public GameStateDto BuildDto()
+            {
+                return new GameStateDto
+                {
+                    StateVersion = this.HandNumber,
+                    Phase = "HandInProgress",
+                    CurrentRound = this.CurrentRound,
+                    CommunityCards = this.CommunityCards.Count > 0
+                        ? new List<CardDto>(this.CommunityCards)
+                        : null,
+                    MainPot = this.MainPot,
+                    CurrentPlayerToActId = this.CurrentPlayerToActId,
+                    HandNumber = this.HandNumber,
+                    SmallBlind = this.SmallBlind,
+                    MinRaise = this.MinRaise,
+                };
+            }
+
+            public List<CardDto>? GetHoleCardsFor(string sessionId)
+            {
+                return this.HoleCards.TryGetValue(sessionId, out var cards)
+                    ? cards
+                    : null;
+            }
+        }
+    }
+}
