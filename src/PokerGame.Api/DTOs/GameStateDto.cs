@@ -27,6 +27,10 @@ namespace PokerGame.Api.DTOs
         public int SmallBlind { get; set; }
 
         public int MinRaise { get; set; }
+
+        public bool IsShowdown { get; set; }
+
+        public Dictionary<string, List<CardDto>>? ShowdownHands { get; set; }
     }
 
     public class CardDto

@@ -1,5 +1,7 @@
 namespace PokerGame.Api
 {
+    using System.Linq;
+
     using Microsoft.AspNetCore.Builder;
     using Microsoft.AspNetCore.SignalR;
     using Microsoft.Extensions.DependencyInjection;
@@ -46,6 +48,7 @@ namespace PokerGame.Api
             // Wire GameEngineWrapper events to SignalR
             var hubContext = app.Services.GetRequiredService<IHubContext<GameHub>>();
             var gameEngine = app.Services.GetRequiredService<IGameEngineWrapper>();
+            var roomManager = app.Services.GetRequiredService<IRoomManager>();
 
             gameEngine.GameStateChanged += (roomCode, state) =>
             {
@@ -54,7 +57,6 @@ namespace PokerGame.Api
 
             gameEngine.PlayerTurnRequested += (roomCode, playerId, turnInfo) =>
             {
-                var roomManager = app.Services.GetRequiredService<IRoomManager>();
                 var room = roomManager.GetRoomByPlayerId(playerId);
                 if (room == null)
                 {
@@ -73,13 +75,15 @@ namespace PokerGame.Api
                 hubContext.Clients.Group(roomCode).SendAsync("OnPlayerActing", new { PlayerId = playerId });
             };
 
-            gameEngine.GameEnded += (roomCode, winnerSessionId, handsPlayed) =>
+            gameEngine.GameEnded += (roomCode, gameEndDto) =>
             {
-                hubContext.Clients.Group(roomCode).SendAsync("OnGameEnded", new
-                {
-                    WinnerPlayerId = winnerSessionId,
-                    HandsPlayed = handsPlayed,
-                });
+                hubContext.Clients.Group(roomCode).SendAsync("OnGameEnd", gameEndDto);
+            };
+
+            gameEngine.TurnTimerTick += (roomCode, timerDto) =>
+            {
+                // Broadcast timer tick to all players so everyone sees the countdown
+                hubContext.Clients.Group(roomCode).SendAsync("OnTurnTimer", timerDto);
             };
 
             app.Run();

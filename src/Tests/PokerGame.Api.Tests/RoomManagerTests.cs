@@ -252,5 +252,49 @@ namespace PokerGame.Api.Tests
             Assert.NotNull(this.roomManager.GetRoom(room1));
             Assert.NotNull(this.roomManager.GetRoom(room2));
         }
+
+        [Fact]
+        public void ResetRoom_ResetsStateToLobby()
+        {
+            var (roomCode, _) = this.roomManager.CreateRoom("Host", "😎", 1000);
+            var room = this.roomManager.GetRoom(roomCode)!;
+            room.State = RoomState.GameComplete;
+
+            var result = this.roomManager.ResetRoom(roomCode);
+
+            Assert.True(result);
+            Assert.Equal(RoomState.Lobby, room.State);
+        }
+
+        [Fact]
+        public void ResetRoom_ResetsPlayerChips()
+        {
+            var (roomCode, _) = this.roomManager.CreateRoom("Host", "😎", 1000);
+            this.roomManager.JoinRoom(roomCode, "Player2", "🤔");
+            var room = this.roomManager.GetRoom(roomCode)!;
+
+            // Simulate game play: modify chips
+            room.Players[0].Chips = 1500;
+            room.Players[1].Chips = 500;
+            room.Players[0].CurrentBet = 50;
+            room.Players[1].Status = PlayerStatus.AllIn;
+            room.State = RoomState.GameComplete;
+
+            this.roomManager.ResetRoom(roomCode);
+
+            foreach (var player in room.Players)
+            {
+                Assert.Equal(1000, player.Chips);
+                Assert.Equal(0, player.CurrentBet);
+                Assert.Equal(PlayerStatus.SittingOut, player.Status);
+            }
+        }
+
+        [Fact]
+        public void ResetRoom_NonexistentRoom_ReturnsFalse()
+        {
+            var result = this.roomManager.ResetRoom("XXXXXX");
+            Assert.False(result);
+        }
     }
 }

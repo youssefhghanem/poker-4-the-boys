@@ -197,6 +197,13 @@ namespace PokerGame.Api.Hubs
                 return new ActionResultDto { Success = false, ErrorMessage = "Not in a room" };
             }
 
+            // Validate action before submitting to engine
+            var (isValid, error) = this.gameEngine.ValidateAction(playerId, actionType, amount);
+            if (!isValid)
+            {
+                return new ActionResultDto { Success = false, ErrorMessage = error };
+            }
+
             var success = this.gameEngine.SubmitAction(playerId, actionType, amount);
 
             return new ActionResultDto
@@ -220,10 +227,12 @@ namespace PokerGame.Api.Hubs
                 return null;
             }
 
-            // Get base state from engine
-            var state = this.gameEngine.GetGameState(room.RoomCode);
+            // Get state from engine (includes players from BuildDto, hole cards filtered per-player).
+            // Note: broadcast via OnGameStateChanged does NOT include hole cards (hidden info).
+            // Clients should call GetGameState after receiving OnGameStateChanged to get their cards.
+            var state = this.gameEngine.GetGameState(room.RoomCode, playerId);
 
-            // If no active game, return lobby state
+            // If no active game, return lobby/game-complete state
             if (state == null)
             {
                 return new GameStateDto
@@ -242,19 +251,6 @@ namespace PokerGame.Api.Hubs
                     SmallBlind = room.SmallBlind,
                 };
             }
-
-            // Populate player info from room sessions
-            state.Players = room.Players.Select((p, i) => new PlayerInfoDto
-            {
-                Id = p.Id,
-                Name = p.Name,
-                Emoji = p.Emoji,
-                Chips = p.Chips,
-                Status = p.Status.ToString(),
-                CurrentBet = p.CurrentBet,
-                IsHost = p.IsHost,
-                Position = i,
-            }).ToList();
 
             return state;
         }
@@ -289,6 +285,127 @@ namespace PokerGame.Api.Hubs
             };
         }
 
+        public async Task<ActionResultDto> UpdateSettings(int? smallBlind = null, int? startingChips = null)
+        {
+            var playerId = this.roomManager.GetPlayerIdByConnectionId(this.Context.ConnectionId);
+            if (playerId == null)
+            {
+                return new ActionResultDto { Success = false, ErrorMessage = "Not in a room" };
+            }
+
+            var room = this.roomManager.GetRoomByPlayerId(playerId);
+            if (room == null)
+            {
+                return new ActionResultDto { Success = false, ErrorMessage = "Room not found" };
+            }
+
+            var player = room.Players.FirstOrDefault(p => p.Id == playerId);
+            if (player == null || !player.IsHost)
+            {
+                return new ActionResultDto { Success = false, ErrorMessage = "Only the host can update settings" };
+            }
+
+            if (room.State != RoomState.Lobby)
+            {
+                return new ActionResultDto { Success = false, ErrorMessage = "Cannot change settings during game" };
+            }
+
+            if (smallBlind.HasValue)
+            {
+                if (smallBlind.Value <= 0)
+                {
+                    return new ActionResultDto { Success = false, ErrorMessage = "Small blind must be positive" };
+                }
+
+                room.SmallBlind = smallBlind.Value;
+            }
+
+            if (startingChips.HasValue)
+            {
+                if (startingChips.Value <= 0)
+                {
+                    return new ActionResultDto { Success = false, ErrorMessage = "Starting chips must be positive" };
+                }
+
+                room.StartingChips = startingChips.Value;
+
+                foreach (var p in room.Players)
+                {
+                    p.Chips = startingChips.Value;
+                }
+            }
+
+            await this.Clients.Group(room.RoomCode).SendAsync(
+                "OnSettingsChanged",
+                new { SmallBlind = room.SmallBlind, StartingChips = room.StartingChips });
+
+            return new ActionResultDto { Success = true };
+        }
+
+        public async Task<ActionResultDto> PlayAgain()
+        {
+            var playerId = this.roomManager.GetPlayerIdByConnectionId(this.Context.ConnectionId);
+            if (playerId == null)
+            {
+                return new ActionResultDto { Success = false, ErrorMessage = "Not in a room" };
+            }
+
+            var room = this.roomManager.GetRoomByPlayerId(playerId);
+            if (room == null)
+            {
+                return new ActionResultDto { Success = false, ErrorMessage = "Room not found" };
+            }
+
+            var player = room.Players.FirstOrDefault(p => p.Id == playerId);
+            if (player == null || !player.IsHost)
+            {
+                return new ActionResultDto { Success = false, ErrorMessage = "Only the host can restart" };
+            }
+
+            if (room.State != RoomState.GameComplete)
+            {
+                return new ActionResultDto { Success = false, ErrorMessage = "Game not complete" };
+            }
+
+            this.roomManager.ResetRoom(room.RoomCode);
+            this.gameEngine.ClearGameState(room.RoomCode);
+
+            await this.Clients.Group(room.RoomCode).SendAsync("OnGameRestarted");
+
+            return new ActionResultDto { Success = true };
+        }
+
+        public async Task<GameStateDto?> Reconnect(string playerId)
+        {
+            var room = this.roomManager.GetRoomByPlayerId(playerId);
+            if (room == null)
+            {
+                return null;
+            }
+
+            var session = room.Players.FirstOrDefault(p => p.Id == playerId);
+            if (session == null)
+            {
+                return null;
+            }
+
+            // Re-add to SignalR group with new connection
+            await this.Groups.AddToGroupAsync(this.Context.ConnectionId, room.RoomCode);
+            this.roomManager.UpdateConnection(playerId, this.Context.ConnectionId);
+
+            // Clear disconnected state
+            session.IsDisconnected = false;
+            session.DisconnectedAt = null;
+
+            // Notify others
+            await this.Clients.Group(room.RoomCode).SendAsync(
+                "OnPlayerReconnected",
+                new { PlayerId = playerId });
+
+            // Return current game state
+            return this.gameEngine.GetGameState(room.RoomCode, playerId);
+        }
+
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
             // Look up player BEFORE removing the connection mapping
@@ -298,21 +415,58 @@ namespace PokerGame.Api.Hubs
             {
                 var room = this.roomManager.GetRoomByPlayerId(playerId);
 
-                // Auto-fold if mid-game
                 if (room != null && room.State == RoomState.HandInProgress)
                 {
-                    this.gameEngine.SubmitAction(playerId, "Fold", null);
-                }
+                    var session = room.Players.FirstOrDefault(p => p.Id == playerId);
+                    if (session != null)
+                    {
+                        // Mark as disconnected, start grace period
+                        session.IsDisconnected = true;
+                        session.DisconnectedAt = DateTime.UtcNow;
 
-                if (room != null)
+                        await this.Clients.Group(room.RoomCode).SendAsync(
+                            "OnPlayerDisconnected",
+                            new { PlayerId = playerId, GracePeriodSeconds = 60 });
+
+                        // Capture for closure
+                        var capturedPlayerId = playerId;
+                        var capturedRoom = room;
+                        var capturedEngine = this.gameEngine;
+
+                        // Start grace period timer
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(60000);
+
+                            var currentSession = capturedRoom.Players.FirstOrDefault(p => p.Id == capturedPlayerId);
+                            if (currentSession?.IsDisconnected == true)
+                            {
+                                // Grace period expired, auto-fold
+                                capturedEngine.SubmitAction(capturedPlayerId, "Fold", null);
+                            }
+                        });
+                    }
+                }
+                else if (room != null)
                 {
-                    await this.Clients.Group(room.RoomCode).SendAsync(
-                        "OnPlayerDisconnected",
-                        new { PlayerId = playerId });
+                    // In lobby, remove player from room
+                    var wasHost = room.Players.Any(p => p.Id == playerId && p.IsHost);
+                    this.roomManager.LeaveRoom(room.RoomCode, playerId);
+
+                    if (wasHost)
+                    {
+                        await this.Clients.Group(room.RoomCode).SendAsync("OnRoomClosed");
+                    }
+                    else
+                    {
+                        await this.Clients.Group(room.RoomCode).SendAsync(
+                            "OnPlayerLeft",
+                            new { PlayerId = playerId });
+                    }
                 }
             }
 
-            // Now clean up the mapping
+            // Clean up the connection mapping (but keep player in room for reconnection)
             this.roomManager.DisconnectPlayer(this.Context.ConnectionId);
 
             await base.OnDisconnectedAsync(exception);

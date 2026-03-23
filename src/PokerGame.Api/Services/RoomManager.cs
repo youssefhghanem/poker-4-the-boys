@@ -236,6 +236,28 @@ namespace PokerGame.Api.Services
             }
         }
 
+        public bool ResetRoom(string roomCode)
+        {
+            lock (this.syncLock)
+            {
+                if (!this.rooms.TryGetValue(roomCode, out var room))
+                {
+                    return false;
+                }
+
+                room.State = RoomState.Lobby;
+
+                foreach (var player in room.Players)
+                {
+                    player.Chips = room.StartingChips;
+                    player.CurrentBet = 0;
+                    player.Status = PlayerStatus.SittingOut;
+                }
+
+                return true;
+            }
+        }
+
         private string GenerateUniqueRoomCode()
         {
             string code;

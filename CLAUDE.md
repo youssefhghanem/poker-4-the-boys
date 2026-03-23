@@ -49,15 +49,15 @@ Published as a NuGet package (`TexasHoldemGameEngine`). Contains all game mechan
 ### Console UI: `TexasHoldem.UI.Console` (netcoreapp3.1)
 `ConsoleUiDecorator` wraps any `IPlayer` via the decorator pattern to render that player's box to a fixed console layout. `ConsolePlayer` enables a human to play interactively. `Program.Main` hardcodes the player lineup and console dimensions.
 
-### Web API: `PokerGame.Api` (net8.0) -- Phase 1
+### Web API: `PokerGame.Api` (net8.0) -- Phase 1 + 2
 ASP.NET Core 8.0 backend with SignalR for real-time multiplayer:
-- **`Hubs/GameHub.cs`** — SignalR hub handling room management (create/join/leave/kick), game control (start, submit action), and connection lifecycle (disconnect auto-folds).
-- **`Services/RoomManager.cs`** — Thread-safe in-memory room management with 6-char room codes. Tracks players by ID, room code, and SignalR connection ID via three synchronized dictionaries.
-- **`Services/GameEngineWrapper.cs`** — Bridges `TexasHoldemGame` to SignalR using `TcsPlayer`. Creates per-room `ActiveGame` state, wires TcsPlayer events to `Action<>` delegates, and syncs engine state back to room sessions.
-- **`DTOs/`** — `GameStateDto`, `PlayerInfoDto`, `CardDto`, `YourTurnDto`, `LobbyStateDto`, etc. Serialized as JSON over SignalR.
+- **`Hubs/GameHub.cs`** — SignalR hub handling room management (create/join/leave/kick), game control (start, submit action with validation), host controls (UpdateSettings, PlayAgain), reconnection (Reconnect), and connection lifecycle (disconnect with 60s grace period during games).
+- **`Services/RoomManager.cs`** — Thread-safe in-memory room management with 6-char room codes. Tracks players by ID, room code, and SignalR connection ID via three synchronized dictionaries. Supports `ResetRoom` for play-again flow.
+- **`Services/GameEngineWrapper.cs`** — Bridges `TexasHoldemGame` to SignalR using `TcsPlayer`. Creates per-room `ActiveGame` state, wires TcsPlayer events to `Action<>` delegates, syncs engine state back to room sessions. Includes per-second turn timer countdown, showdown state tracking, action validation, and per-player hole card filtering.
+- **`DTOs/`** — `GameStateDto`, `PlayerInfoDto`, `CardDto`, `YourTurnDto`, `LobbyStateDto`, `GameEndDto`, `PlayerStandingDto`, `TurnTimerDto`. Serialized as JSON over SignalR.
 
 ### Tests: `src/Tests/`
-- **`PokerGame.Api.Tests`** (xunit, net8.0) — Unit tests for RoomManager (22 tests covering create, join, leave, connection mapping, edge cases).
+- **`PokerGame.Api.Tests`** (xunit, net8.0) — 32 unit tests: RoomManager (25 tests covering create, join, leave, connection mapping, reset, edge cases) + GameEngineWrapper (7 tests covering submit, state, validation).
 - **`TexasHoldem.Logic.Tests`** (xunit + Moq) — Unit tests for cards, hand evaluation, game mechanics, and betting rules.
 - **`TexasHoldem.Tests.GameSimulations`** — Console app that runs full game simulations (e.g., SmartPlayer vs AlwaysCallPlayer) and prints win statistics.
 
@@ -123,14 +123,31 @@ Phase 1 added the ASP.NET Core backend with SignalR real-time communication. See
 2. **Room lifecycle**: `CreateRoom` → returns 6-char code. `JoinRoom(code)` → joins SignalR group. Host calls `StartGame`.
 3. **Game loop**: `GameEngineWrapper.StartGameAsync` creates `TcsPlayer` per player, runs `TexasHoldemGame.Start()` on a background thread. The engine blocks on `TcsPlayer.GetTurn()` until the client submits an action via `SubmitAction`.
 4. **State sync**: TcsPlayer events (`HandStarted`, `RoundStarted`, `TurnRequested`, `HandEnded`) fire on the engine thread, update room session state, and broadcast `GameStateDto` to all clients via SignalR group.
-5. **Turn timeout**: TcsPlayer's built-in 30s timeout auto-folds. No separate timer in the wrapper.
+5. **Turn timeout**: TcsPlayer's built-in 30s timeout auto-folds. The wrapper also runs a per-second countdown timer that is cancelled on both action submission and timeout.
 
 ### Key Design Decisions
 - **Single solution**: `PokerGame.Api` and `PokerGame.Api.Tests` were added to the existing `TexasHoldem.sln` rather than creating a new solution.
 - **Action parsing by string**: `SubmitAction` accepts string action types ("Fold", "Check", "Call", "Raise", "AllIn") rather than the engine's `PlayerActionType` enum, since the enum has no AllIn value. AllIn is handled as `Raise(int.MaxValue)`.
-- **Per-room game state**: `GameEngineWrapper` uses a nested `ActiveGame` class per room to avoid cross-room state contamination.
+- **Per-room game state**: `GameEngineWrapper` uses a nested `ActiveGame` class per room to avoid cross-room state contamination. `ActiveGame` holds a `Room` reference for populating player info in `BuildDto()`.
 - **CORS for dev**: Uses `SetIsOriginAllowed(_ => true)` + `AllowCredentials()` for SignalR compatibility. Must be restricted for production.
-- **No separate turn timer**: TcsPlayer owns the timeout (30s). The wrapper does not run a competing timer.
+- **Events wired in `Program.cs`**: All `GameEngineWrapper` events are subscribed in `Program.cs` via `IHubContext<GameHub>`, NOT in the Hub constructor (hubs are transient — subscribing there leaks handlers).
+- **Hole cards are hidden info**: Broadcast `OnGameStateChanged` does NOT include hole cards (same DTO for all players). Clients must call `GetGameState()` after receiving `OnGameStateChanged` to get their own hole cards.
+
+## Phase 2 Changes (Real-Time Gameplay & State Sync)
+
+Phase 2 completed the real-time multiplayer infrastructure. See `PHASE2_PLAN.md` for the full plan and 7 review amendments.
+
+### What Was Added
+1. **Hole card exposure**: `GetGameState` accepts `requestingPlayerId` and filters hole cards per-player. `BuildDto()` now includes player info from the Room reference.
+2. **Turn timer countdown**: Per-second `TurnTimerTick` event broadcast to all clients. Timer cancelled on both `SubmitAction` and TcsPlayer timeout (via `CancelAllTimers` at start of `HandleTurnRequested` and `HandleHandEnded`).
+3. **Showdown results**: `GameStateDto.IsShowdown` and `ShowdownHands` populated from `IEndHandContext.ShowdownCards` during `HandleHandEnded`.
+4. **Game end with standings**: `GameEndDto` with `WinnerPlayerId`, `WinnerName`, `TotalHandsPlayed`, and `Standings` (ordered by chips). Active game kept alive until `ClearGameState` (called by PlayAgain).
+5. **Action validation**: `ValidateAction` checks turn order and raise amounts before `SubmitAction` passes to engine.
+6. **Host controls**: `UpdateSettings` (small blind, starting chips) with input validation. Lobby-only, host-only.
+7. **Play again**: `PlayAgain` resets room via `ResetRoom` + `ClearGameState`. Host-only, game-complete only.
+8. **Reconnection**: `Reconnect(playerId)` takes playerId (not connection-based — new connections have new IDs). 60s grace period during games before auto-fold. `PlayerSession.IsDisconnected` tracking.
+9. **Lobby disconnect cleanup**: Disconnecting in lobby removes player from room (not just marks disconnected).
+10. **Thread safety**: `ActiveGame` uses `ConcurrentDictionary` for `HoleCards`, `ChipsAtHandStart`, `NameToSessionId`, `ShowdownCards`, `TimerCts`, and `PlayerMap`.
 
 ### SignalR Hub Methods (API Contract)
 **Client → Server:**
@@ -142,6 +159,9 @@ Phase 1 added the ASP.NET Core backend with SignalR real-time communication. See
 - `SubmitAction(actionType, amount?)` → `ActionResultDto`
 - `GetGameState()` → `GameStateDto`
 - `GetLobbyState()` → `LobbyStateDto`
+- `UpdateSettings(smallBlind?, startingChips?)` → `ActionResultDto` *(Phase 2)*
+- `PlayAgain()` → `ActionResultDto` *(Phase 2)*
+- `Reconnect(playerId)` → `GameStateDto?` *(Phase 2)*
 
 **Server → Client:**
 - `OnPlayerJoined({ PlayerId, Name, Emoji })`
@@ -151,5 +171,9 @@ Phase 1 added the ASP.NET Core backend with SignalR real-time communication. See
 - `OnGameStateChanged(GameStateDto)`
 - `OnYourTurn(YourTurnDto)`
 - `OnPlayerActing({ PlayerId })`
-- `OnPlayerDisconnected({ PlayerId })`
-- `OnGameEnded({ WinnerPlayerId, HandsPlayed })`
+- `OnPlayerDisconnected({ PlayerId, GracePeriodSeconds? })`
+- `OnPlayerReconnected({ PlayerId })` *(Phase 2)*
+- `OnTurnTimer(TurnTimerDto)` *(Phase 2)*
+- `OnSettingsChanged({ SmallBlind, StartingChips })` *(Phase 2)*
+- `OnGameEnd(GameEndDto)` *(Phase 2)*
+- `OnGameRestarted()` *(Phase 2)*

@@ -19,5 +19,7 @@ namespace PokerGame.Api.Services
         void UpdateConnection(string playerId, string connectionId);
 
         void DisconnectPlayer(string connectionId);
+
+        bool ResetRoom(string roomCode);
     }
 }

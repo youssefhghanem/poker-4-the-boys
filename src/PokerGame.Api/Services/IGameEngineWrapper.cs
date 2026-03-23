@@ -11,12 +11,18 @@ namespace PokerGame.Api.Services
 
         bool SubmitAction(string playerId, string actionType, int? amount);
 
-        GameStateDto? GetGameState(string roomCode);
+        GameStateDto? GetGameState(string roomCode, string? requestingPlayerId = null);
+
+        void ClearGameState(string roomCode);
+
+        (bool Success, string? Error) ValidateAction(string playerId, string actionType, int? amount);
 
         event Action<string, GameStateDto>? GameStateChanged;
 
         event Action<string, string, YourTurnDto>? PlayerTurnRequested;
 
-        event Action<string, string, int>? GameEnded;
+        event Action<string, GameEndDto>? GameEnded;
+
+        event Action<string, TurnTimerDto>? TurnTimerTick;
     }
 }

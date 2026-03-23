@@ -22,7 +22,9 @@ namespace PokerGame.Api.Services
 
         public event Action<string, string, YourTurnDto>? PlayerTurnRequested;
 
-        public event Action<string, string, int>? GameEnded;
+        public event Action<string, GameEndDto>? GameEnded;
+
+        public event Action<string, TurnTimerDto>? TurnTimerTick;
 
         public Task StartGameAsync(Room room)
         {
@@ -31,7 +33,7 @@ namespace PokerGame.Api.Services
                 return Task.CompletedTask;
             }
 
-            var gameState = new ActiveGame(room.RoomCode);
+            var gameState = new ActiveGame(room.RoomCode, room);
 
             // Create TcsPlayer for each player, keyed by session ID
             foreach (var session in room.Players)
@@ -88,7 +90,27 @@ namespace PokerGame.Api.Services
                     room.State = RoomState.GameComplete;
 
                     var winnerSessionId = gameState.NameToSessionId.GetValueOrDefault(winner.Name, string.Empty);
-                    this.GameEnded?.Invoke(room.RoomCode, winnerSessionId, game.HandsPlayed);
+
+                    var gameEndDto = new GameEndDto
+                    {
+                        WinnerPlayerId = winnerSessionId,
+                        WinnerName = winner.Name,
+                        TotalHandsPlayed = game.HandsPlayed,
+                        Standings = room.Players
+                            .OrderByDescending(p => p.Chips)
+                            .Select((p, i) => new PlayerStandingDto
+                            {
+                                PlayerId = p.Id,
+                                Name = p.Name,
+                                FinalChips = p.Chips,
+                                Position = i + 1,
+                            }).ToList(),
+                    };
+
+                    this.GameEnded?.Invoke(room.RoomCode, gameEndDto);
+
+                    // Keep activeGame alive so clients can call GetGameState after game ends.
+                    // It will be cleaned up by ClearGameState (called from PlayAgain).
                 }
                 catch (Exception)
                 {
@@ -102,6 +124,9 @@ namespace PokerGame.Api.Services
 
         public bool SubmitAction(string playerId, string actionType, int? amount)
         {
+            // Cancel any active turn timer for this player
+            this.CancelTimer(playerId);
+
             var tcsPlayer = this.FindTcsPlayer(playerId);
             if (tcsPlayer == null)
             {
@@ -135,20 +160,95 @@ namespace PokerGame.Api.Services
             return tcsPlayer.SubmitAction(action);
         }
 
-        public GameStateDto? GetGameState(string roomCode)
+        public GameStateDto? GetGameState(string roomCode, string? requestingPlayerId = null)
         {
             if (!this.activeGames.TryGetValue(roomCode, out var gameState))
             {
                 return null;
             }
 
-            return gameState.BuildDto();
+            var dto = gameState.BuildDto();
+
+            // Filter hole cards: only the requesting player sees their own
+            if (requestingPlayerId != null && dto.Players != null)
+            {
+                var holeCards = gameState.GetHoleCardsFor(requestingPlayerId);
+                foreach (var player in dto.Players)
+                {
+                    if (player.Id == requestingPlayerId)
+                    {
+                        player.HoleCards = holeCards;
+                    }
+                    else if (!dto.IsShowdown)
+                    {
+                        player.HoleCards = null;
+                    }
+                }
+            }
+
+            return dto;
+        }
+
+        public void ClearGameState(string roomCode)
+        {
+            if (this.activeGames.TryRemove(roomCode, out var game))
+            {
+                // Cancel all timers
+                foreach (var cts in game.TimerCts.Values)
+                {
+                    cts.Cancel();
+                    cts.Dispose();
+                }
+
+                game.TimerCts.Clear();
+
+                foreach (var player in game.PlayerMap.Values)
+                {
+                    player.Dispose();
+                }
+            }
+        }
+
+        public (bool Success, string? Error) ValidateAction(string playerId, string actionType, int? amount)
+        {
+            foreach (var game in this.activeGames.Values)
+            {
+                if (!game.PlayerMap.ContainsKey(playerId))
+                {
+                    continue;
+                }
+
+                if (game.CurrentPlayerToActId != playerId)
+                {
+                    return (false, "Not your turn");
+                }
+
+                if (actionType.Equals("RAISE", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!amount.HasValue || amount.Value <= 0)
+                    {
+                        return (false, "Invalid raise amount");
+                    }
+                }
+
+                return (true, null);
+            }
+
+            return (false, "Player not in active game");
         }
 
         public void Dispose()
         {
             foreach (var game in this.activeGames.Values)
             {
+                foreach (var cts in game.TimerCts.Values)
+                {
+                    cts.Cancel();
+                    cts.Dispose();
+                }
+
+                game.TimerCts.Clear();
+
                 foreach (var player in game.PlayerMap.Values)
                 {
                     player.Dispose();
@@ -171,8 +271,35 @@ namespace PokerGame.Api.Services
             return null;
         }
 
+        private void CancelTimer(string playerId)
+        {
+            foreach (var game in this.activeGames.Values)
+            {
+                if (game.TimerCts.TryRemove(playerId, out var cts))
+                {
+                    cts.Cancel();
+                    cts.Dispose();
+                }
+            }
+        }
+
+        private void CancelAllTimers(ActiveGame gameState)
+        {
+            foreach (var kvp in gameState.TimerCts)
+            {
+                if (gameState.TimerCts.TryRemove(kvp.Key, out var cts))
+                {
+                    cts.Cancel();
+                    cts.Dispose();
+                }
+            }
+        }
+
         private void HandleTurnRequested(Room room, ActiveGame gameState, string sessionId, IGetTurnContext context)
         {
+            // Cancel any leftover timer from previous turn (handles TcsPlayer timeout case)
+            this.CancelAllTimers(gameState);
+
             gameState.CurrentPlayerToActId = sessionId;
 
             // Build turn info from engine context
@@ -221,6 +348,36 @@ namespace PokerGame.Api.Services
             }
 
             this.PlayerTurnRequested?.Invoke(room.RoomCode, sessionId, turnInfo);
+
+            // Start countdown timer that pushes every second
+            var timerCts = new CancellationTokenSource();
+            gameState.TimerCts[sessionId] = timerCts;
+
+            _ = Task.Run(async () =>
+            {
+                var remaining = 30;
+                try
+                {
+                    while (remaining > 0 && !timerCts.Token.IsCancellationRequested)
+                    {
+                        await Task.Delay(1000, timerCts.Token);
+                        remaining--;
+
+                        var timerUpdate = new TurnTimerDto
+                        {
+                            PlayerId = sessionId,
+                            TimeRemaining = remaining,
+                            TotalTime = 30,
+                        };
+
+                        this.TurnTimerTick?.Invoke(room.RoomCode, timerUpdate);
+                    }
+                }
+                catch (TaskCanceledException)
+                {
+                    // Timer was cancelled (player acted or timeout), this is expected
+                }
+            });
         }
 
         private void HandleHandStarted(Room room, ActiveGame gameState, string sessionId, IStartHandContext context)
@@ -229,6 +386,8 @@ namespace PokerGame.Api.Services
             gameState.SmallBlind = context.SmallBlind;
             gameState.CommunityCards.Clear();
             gameState.CurrentPlayerToActId = null;
+            gameState.IsShowdown = false;
+            gameState.ShowdownCards = null;
 
             // Store this player's hole cards
             gameState.HoleCards[sessionId] = new List<CardDto>
@@ -237,13 +396,14 @@ namespace PokerGame.Api.Services
                 ToCardDto(context.SecondCard),
             };
 
-            // Update session chip count
+            // Snapshot chips at hand start for winner detection
             var session = room.Players.FirstOrDefault(p => p.Id == sessionId);
             if (session != null)
             {
                 session.Chips = context.MoneyLeft;
                 session.CurrentBet = 0;
                 session.Status = PlayerStatus.Active;
+                gameState.ChipsAtHandStart[sessionId] = context.MoneyLeft;
             }
 
             // Broadcast state after all players have received their hand start
@@ -269,18 +429,33 @@ namespace PokerGame.Api.Services
 
         private void HandleHandEnded(Room room, ActiveGame gameState, IEndHandContext context)
         {
-            gameState.ShowdownCards = context.ShowdownCards?
-                .ToDictionary(
-                    kvp => gameState.NameToSessionId.GetValueOrDefault(kvp.Key, kvp.Key),
-                    kvp => kvp.Value.Select(ToCardDto).ToList());
+            // Cancel any leftover timers
+            this.CancelAllTimers(gameState);
+
+            // Store showdown cards (keyed by session ID)
+            if (context.ShowdownCards != null)
+            {
+                var dict = context.ShowdownCards
+                    .ToDictionary(
+                        kvp => gameState.NameToSessionId.GetValueOrDefault(kvp.Key, kvp.Key),
+                        kvp => kvp.Value.Select(ToCardDto).ToList());
+                gameState.ShowdownCards = new ConcurrentDictionary<string, List<CardDto>>(dict);
+            }
+            else
+            {
+                gameState.ShowdownCards = null;
+            }
 
             gameState.CurrentPlayerToActId = null;
+            gameState.IsShowdown = gameState.ShowdownCards != null && gameState.ShowdownCards.Count > 0;
 
             this.BroadcastState(room.RoomCode, gameState);
 
             // Clear hand state for next hand
             gameState.HoleCards.Clear();
             gameState.ShowdownCards = null;
+            gameState.IsShowdown = false;
+            gameState.ChipsAtHandStart.Clear();
         }
 
         private void BroadcastState(string roomCode, ActiveGame gameState)
@@ -304,25 +479,31 @@ namespace PokerGame.Api.Services
         /// </summary>
         private class ActiveGame
         {
-            public ActiveGame(string roomCode)
+            public ActiveGame(string roomCode, Room room)
             {
                 this.RoomCode = roomCode;
+                this.Room = room;
             }
 
             public string RoomCode { get; }
+
+            public Room Room { get; }
 
             public TexasHoldemGame? Game { get; set; }
 
             public ConcurrentDictionary<string, TcsPlayer> PlayerMap { get; }
                 = new ConcurrentDictionary<string, TcsPlayer>();
 
-            public Dictionary<string, string> NameToSessionId { get; }
-                = new Dictionary<string, string>();
+            public ConcurrentDictionary<string, string> NameToSessionId { get; }
+                = new ConcurrentDictionary<string, string>();
 
-            public Dictionary<string, List<CardDto>> HoleCards { get; }
-                = new Dictionary<string, List<CardDto>>();
+            public ConcurrentDictionary<string, List<CardDto>> HoleCards { get; }
+                = new ConcurrentDictionary<string, List<CardDto>>();
 
-            public Dictionary<string, List<CardDto>>? ShowdownCards { get; set; }
+            public ConcurrentDictionary<string, List<CardDto>>? ShowdownCards { get; set; }
+
+            public ConcurrentDictionary<string, int> ChipsAtHandStart { get; }
+                = new ConcurrentDictionary<string, int>();
 
             public List<CardDto> CommunityCards { get; set; } = new List<CardDto>();
 
@@ -338,9 +519,14 @@ namespace PokerGame.Api.Services
 
             public int MinRaise { get; set; }
 
+            public bool IsShowdown { get; set; }
+
+            public ConcurrentDictionary<string, CancellationTokenSource> TimerCts { get; }
+                = new ConcurrentDictionary<string, CancellationTokenSource>();
+
             public GameStateDto BuildDto()
             {
-                return new GameStateDto
+                var dto = new GameStateDto
                 {
                     StateVersion = this.HandNumber,
                     Phase = "HandInProgress",
@@ -353,7 +539,29 @@ namespace PokerGame.Api.Services
                     HandNumber = this.HandNumber,
                     SmallBlind = this.SmallBlind,
                     MinRaise = this.MinRaise,
+                    IsShowdown = this.IsShowdown,
                 };
+
+                // Include showdown hands when in showdown state
+                if (this.IsShowdown && this.ShowdownCards != null)
+                {
+                    dto.ShowdownHands = new Dictionary<string, List<CardDto>>(this.ShowdownCards);
+                }
+
+                // Populate player info from room
+                dto.Players = this.Room.Players.Select((p, i) => new PlayerInfoDto
+                {
+                    Id = p.Id,
+                    Name = p.Name,
+                    Emoji = p.Emoji,
+                    Chips = p.Chips,
+                    Status = p.Status.ToString(),
+                    CurrentBet = p.CurrentBet,
+                    IsHost = p.IsHost,
+                    Position = i,
+                }).ToList();
+
+                return dto;
             }
 
             public List<CardDto>? GetHoleCardsFor(string sessionId)
