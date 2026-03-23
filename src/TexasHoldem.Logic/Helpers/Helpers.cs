@@ -43,7 +43,10 @@
         {
             var playerHand = player.Concat(communityCards);
             var playerBestHand = HandEvaluator.GetBestHand(playerHand);
-            var playerHandValue = (int)playerBestHand.RankType;
+
+            // Scale rank by 10000 to prevent win-count from overflowing
+            // into the next rank's range (max 9 opponents, so max +9)
+            var playerHandValue = (int)playerBestHand.RankType * 10000;
 
             foreach (var opponent in opponents)
             {

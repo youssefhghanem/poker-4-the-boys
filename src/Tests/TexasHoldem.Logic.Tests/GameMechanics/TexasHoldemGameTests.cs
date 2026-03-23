@@ -72,5 +72,16 @@
             Assert.Throws<ArgumentException>(
                 () => { var twoPlayersGame = new TexasHoldemGame(mockedFirstPlayer.Object, mockedSecondPlayer.Object, initialMoney); });
         }
+
+        [Fact]
+        public void ConstructorShouldThrowArgumentNullExceptionWhenPlayerInCollectionIsNull()
+        {
+            var mockedPlayer = new Mock<IPlayer>();
+            mockedPlayer.SetupGet(x => x.Name).Returns("ValidPlayer");
+            IPlayer nullPlayer = null;
+
+            Assert.Throws<ArgumentNullException>(
+                () => new TexasHoldemGame(new[] { mockedPlayer.Object, nullPlayer }, 1000));
+        }
     }
 }

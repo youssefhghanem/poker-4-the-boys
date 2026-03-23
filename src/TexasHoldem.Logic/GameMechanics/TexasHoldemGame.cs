@@ -70,6 +70,14 @@
                 throw new ArgumentOutOfRangeException(nameof(initialMoney), "Initial money should be greater than 0 and less than 200000");
             }
 
+            foreach (var player in players)
+            {
+                if (player == null)
+                {
+                    throw new ArgumentNullException(nameof(players), "One of the players in the collection is null");
+                }
+            }
+
             this.allPlayers = new List<InternalPlayer>(players.Count);
             foreach (var item in players)
             {
@@ -101,18 +109,6 @@
             return winner;
         }
 
-        private void Rebuy()
-        {
-            var playerNames = this.allPlayers.Select(x => x.Name).ToList().AsReadOnly();
-            foreach (var player in this.allPlayers)
-            {
-                if (player.PlayerMoney.Money <= 0)
-                {
-                    player.StartGame(new StartGameContext(playerNames, player.BuyIn == -1 ? this.initialMoney : player.BuyIn));
-                }
-            }
-        }
-
         private void PlayGame()
         {
             var shifted = this.allPlayers.ToList();
@@ -135,8 +131,6 @@
                 IHandLogic hand = new HandLogic(shifted, this.HandsPlayed, smallBlind);
 
                 hand.Play();
-
-                this.Rebuy();
             }
         }
     }

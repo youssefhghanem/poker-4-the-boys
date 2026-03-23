@@ -74,9 +74,10 @@
                 }
                 else
                 {
-                    // All-in
-                    action.Money = this.Money;
-                    this.PlaceMoney(action.Money);
+                    // All-in: create new action with actual amount instead of mutating
+                    var allInAmount = this.Money;
+                    this.PlaceMoney(allInAmount);
+                    return PlayerAction.Raise(allInAmount);
                 }
             }
             else if (action.Type == PlayerActionType.CheckCall)

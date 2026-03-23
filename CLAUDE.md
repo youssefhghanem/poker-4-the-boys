@@ -68,5 +68,32 @@ public class MyPlayer : BasePlayer
 ## Key Design Notes
 
 - **Blind schedule**: `TexasHoldemGame.SmallBlinds` defines the escalation schedule but the game currently holds blinds constant (`SmallBlinds[0]`). The escalating-blind logic is commented out.
-- **Rebuy**: After each hand, players at zero chips are reset to their initial stack via `Rebuy()`.
+- **No rebuy**: Players bust out at 0 chips. The game terminates when 1 player remains. (Rebuy was removed in Phase 0.)
 - **`InternalsVisibleTo`**: The `TexasHoldem.Logic` project exposes internals to `TexasHoldem.Logic.Tests` for testing internal types like `InternalPlayerMoney`.
+- **`PlayerAction` is immutable**: `Fold()` and `CheckOrCall()` return shared singletons. `Raise()` and `Post()` return new instances. Never mutate `Money` — create a new action instead.
+- **Card dealing uses CSPRNG**: `RandomProvider` uses `System.Security.Cryptography.RandomNumberGenerator` with rejection sampling (no modular bias). The instance is static and thread-safe.
+
+## Phase 0 Changes (Engine Fixes)
+
+Phase 0 fixed 7 critical bugs and added the async bridge prototype. See `docs/superpowers/plans/2026-03-23-phase0-engine-fixes.md` for the full plan.
+
+### Bug Fixes Applied
+1. **Full house evaluation** (`HandEvaluator.cs`): Changed `if/if` to `if/else if` to prevent >5 cards when two three-of-a-kinds exist.
+2. **Showdown ranking overflow** (`Helpers.cs`): Scaled `HandRankType` by 10000 in `GetHandRankValue` to prevent win-count from overflowing into adjacent rank ranges.
+3. **Split pot chip loss** (`HandLogic.cs`): Added `pot % count` remainder distribution to first nominees.
+4. **Heads-up showdown** (`HandLogic.cs`): Removed 2-player special case; all showdowns now use the unified multi-player path with proper side pot handling.
+5. **Infinite game loop** (`TexasHoldemGame.cs`): Removed `Rebuy()` method and its call in `PlayGame()`.
+6. **Constructor validation** (`TexasHoldemGame.cs`): Added null check for individual players in the collection before creating `InternalPlayer` wrappers.
+7. **Mutable singleton** (`PlayerAction.cs` + `InternalPlayerMoney.cs`): Removed `internal set` on `Money`; all-in now creates a new `PlayerAction.Raise(amount)` instead of mutating.
+
+### Additional Fix
+- **Uncontested side pot**: `HandLogic.cs` line that did `continue` for single-player pots now correctly awards the pot to that player.
+
+### Async Bridge: `TcsPlayer`
+`src/TexasHoldem.Logic/Async/TcsPlayer.cs` — An `IPlayer` implementation that bridges the synchronous game engine to async callers using `ManualResetEventSlim`.
+
+- Engine calls `GetTurn()` → blocks on the gate
+- External code (e.g., SignalR hub) calls `SubmitAction(action)` → unblocks the gate
+- Timeout (default 30s) → auto-folds
+- Events: `TurnRequested`, `HandStarted`, `RoundStarted`, `HandEnded`
+- Implements `IDisposable` (disposes `ManualResetEventSlim`)

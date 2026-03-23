@@ -67,17 +67,20 @@
                 return new BestHand(HandRankType.FourOfAKind, bestCards);
             }
 
-            // Full
+            // Full House
             var pairTypes = this.GetTypesWithNCards(cardTypeCounts, 2);
             var threeOfAKindTypes = this.GetTypesWithNCards(cardTypeCounts, 3);
             if ((pairTypes.Count > 0 && threeOfAKindTypes.Count > 0) || threeOfAKindTypes.Count > 1)
             {
                 var bestCards = new List<CardType>();
+
+                // Always use the highest three-of-a-kind (3 cards)
                 for (var i = 0; i < 3; i++)
                 {
                     bestCards.Add(threeOfAKindTypes[0]);
                 }
 
+                // For the pair component: prefer second trips over a pair (higher rank)
                 if (threeOfAKindTypes.Count > 1)
                 {
                     for (var i = 0; i < 2; i++)
@@ -85,8 +88,7 @@
                         bestCards.Add(threeOfAKindTypes[1]);
                     }
                 }
-
-                if (pairTypes.Count > 0)
+                else if (pairTypes.Count > 0)
                 {
                     for (var i = 0; i < 2; i++)
                     {

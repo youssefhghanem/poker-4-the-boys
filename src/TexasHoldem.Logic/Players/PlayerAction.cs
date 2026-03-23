@@ -20,7 +20,7 @@
 
         public PlayerActionType Type { get; }
 
-        public int Money { get; internal set; }
+        public int Money { get; }
 
         public static PlayerAction Fold()
         {
