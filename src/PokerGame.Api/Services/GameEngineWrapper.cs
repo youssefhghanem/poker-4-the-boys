@@ -451,18 +451,20 @@ namespace PokerGame.Api.Services
             gameState.IsShowdown = gameState.ShowdownCards != null && gameState.ShowdownCards.Count > 0;
 
             // Guard: HandleHandEnded fires once per player — only broadcast and sleep on first invocation.
+            // Engine events fire sequentially on a single background thread, so IsHandComplete is set
+            // before any subsequent invocation reads it.
             if (!gameState.IsHandComplete)
             {
                 gameState.IsHandComplete = true;
                 this.BroadcastState(room.RoomCode, gameState);      // HandComplete broadcast
                 System.Threading.Thread.Sleep(2500);                // pause engine thread; clients animate
-            }
 
-            // Clear hand state for next hand (runs once per player; all assignments are idempotent).
-            gameState.HoleCards.Clear();
-            gameState.ShowdownCards = null;
-            gameState.IsShowdown = false;
-            gameState.ChipsAtHandStart.Clear();
+                // Clear hand state after animation window (inside guard so state stays intact during sleep).
+                gameState.HoleCards.Clear();
+                gameState.ShowdownCards = null;
+                gameState.IsShowdown = false;
+                gameState.ChipsAtHandStart.Clear();
+            }
         }
 
         private void BroadcastState(string roomCode, ActiveGame gameState)

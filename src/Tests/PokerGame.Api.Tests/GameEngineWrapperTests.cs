@@ -1,6 +1,7 @@
 namespace PokerGame.Api.Tests
 {
     using System;
+    using System.Linq;
 
     using PokerGame.Api.DTOs;
     using PokerGame.Api.Services;
@@ -140,8 +141,11 @@ namespace PokerGame.Api.Tests
                 wrapper.SubmitAction(state.CurrentPlayerToActId, "AllIn", null);
             }
 
-            // Wait for hand to complete and HandComplete phase to be broadcast
-            System.Threading.Thread.Sleep(500);
+            // Poll until HandComplete appears in broadcastPhases (max 3s)
+            for (int i = 0; i < 30 && !broadcastPhases.Contains("HandComplete"); i++)
+            {
+                System.Threading.Thread.Sleep(100);
+            }
 
             // Assert
             Assert.Contains("HandComplete", broadcastPhases);
