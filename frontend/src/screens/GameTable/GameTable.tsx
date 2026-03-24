@@ -47,8 +47,7 @@ export function GameTableScreen() {
               isActive={gameState.currentPlayerToActId === p.id}
               isFolded={p.status === 'Folded'}
               isDisconnected={disconnectedPlayerIds.has(p.id)} />
-            <ChipDisplay amount={p.chips} size="sm" />
-            {p.currentBet > 0 && <span className="bet-badge">{p.currentBet}</span>}
+            <ChipDisplay amount={p.chips} size="sm" atStake={p.currentBet} />
             {p.status === 'AllIn' && <span className="allin-badge">ALL IN</span>}
             {/* Showdown: show opponent hole cards */}
             {gameState.isShowdown && gameState.showdownHands?.[p.id] && (
@@ -93,7 +92,7 @@ export function GameTableScreen() {
               <PlayingCard key={i} card={card} size="lg" delay={i * 0.15} />
             )) || [<PlayingCard key={0} size="lg" />, <PlayingCard key={1} size="lg" />]}
           </div>
-          <ChipDisplay amount={me?.chips || 0} label="You" size="md" />
+          <ChipDisplay amount={me?.chips || 0} label="You" size="md" atStake={me?.currentBet} />
         </div>
 
         {/* Betting controls */}
