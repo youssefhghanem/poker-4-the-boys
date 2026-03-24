@@ -17,6 +17,8 @@ interface GameStore {
   turnTimer: number | null;
   gameEndResult: GameEndDto | null;
   disconnectedPlayerIds: Set<string>;
+  prevHandChips: Record<string, number> | null;
+  handResultVisible: boolean;
 
   // Actions
   setConnected: (connected: boolean) => void;
@@ -28,6 +30,8 @@ interface GameStore {
   setGameEndResult: (result: GameEndDto | null) => void;
   addDisconnected: (playerId: string) => void;
   removeDisconnected: (playerId: string) => void;
+  setPrevHandChips: (chips: Record<string, number> | null) => void;
+  setHandResultVisible: (visible: boolean) => void;
   reset: () => void;
 }
 
@@ -42,6 +46,8 @@ const initialState = {
   turnTimer: null as number | null,
   gameEndResult: null as GameEndDto | null,
   disconnectedPlayerIds: new Set<string>(),
+  prevHandChips: null as Record<string, number> | null,
+  handResultVisible: false,
 };
 
 export const useGameStore = create<GameStore>((set) => ({
@@ -64,5 +70,7 @@ export const useGameStore = create<GameStore>((set) => ({
     next.delete(playerId);
     return { disconnectedPlayerIds: next };
   }),
+  setPrevHandChips: (prevHandChips) => set({ prevHandChips }),
+  setHandResultVisible: (handResultVisible) => set({ handResultVisible }),
   reset: () => set({ ...initialState, disconnectedPlayerIds: new Set<string>() }),
 }));
