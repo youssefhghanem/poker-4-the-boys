@@ -1,0 +1,11 @@
+.join-screen {
+  min-height: 100vh; min-height: 100dvh;
+  display: flex; align-items: center; justify-content: center;
+  padding: var(--sp-md);
+}
+
+.join-content {
+  max-width: 360px; width: 100%;
+  background: rgba(255, 255, 255, 0.05);
+  padding: var(--sp-lg); border-radius: var(--radius-lg);
+}
