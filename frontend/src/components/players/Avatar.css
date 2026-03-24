@@ -1,0 +1,28 @@
+.avatar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.avatar-sm .avatar-emoji { font-size: 24px; }
+.avatar-md .avatar-emoji { font-size: 32px; }
+
+.avatar-name {
+  font-size: 11px;
+  color: var(--cream);
+  text-align: center;
+  max-width: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.avatar-active .avatar-emoji { animation: pulse 1.2s ease-in-out infinite; }
+.avatar-folded { opacity: 0.4; filter: grayscale(40%); }
+.avatar-disconnected { opacity: 0.3; }
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+}
