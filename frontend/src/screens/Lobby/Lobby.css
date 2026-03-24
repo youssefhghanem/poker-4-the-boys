@@ -1,0 +1,54 @@
+.lobby-screen {
+  min-height: 100vh; min-height: 100dvh;
+  display: flex; align-items: center; justify-content: center;
+  padding: var(--sp-md);
+}
+
+.lobby-content {
+  max-width: 400px; width: 100%;
+  background: rgba(255, 255, 255, 0.05);
+  padding: var(--sp-lg); border-radius: var(--radius-lg);
+}
+
+.lobby-header { text-align: center; margin-bottom: var(--sp-lg); }
+
+.room-code-box {
+  display: flex; flex-direction: column; align-items: center;
+  background: rgba(0, 0, 0, 0.3);
+  padding: var(--sp-md); border-radius: var(--radius-md);
+  border: 2px solid var(--cream); margin-top: var(--sp-md);
+}
+.room-code-label { font-size: 11px; color: var(--cream); text-transform: uppercase; }
+.room-code-value {
+  font-size: 32px; font-family: var(--font-mono);
+  font-weight: 700; letter-spacing: 4px; color: white;
+}
+
+.lobby-players { margin-bottom: var(--sp-lg); }
+.lobby-players-title { font-size: 14px; color: var(--cream); margin-bottom: var(--sp-sm); }
+
+.lobby-player-row {
+  display: flex; align-items: center; gap: var(--sp-md);
+  padding: var(--sp-sm); background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-md); margin-bottom: var(--sp-xs);
+}
+
+.host-badge {
+  font-size: 10px; background: var(--cream); color: var(--felt-dark);
+  padding: 2px 6px; border-radius: var(--radius-sm);
+  font-weight: 700; margin-left: auto;
+}
+
+.lobby-settings {
+  display: flex; justify-content: center; gap: var(--sp-lg);
+  margin-bottom: var(--sp-lg); font-size: 13px; color: rgba(255, 255, 255, 0.6);
+}
+
+.lobby-actions { display: flex; gap: var(--sp-md); align-items: center; }
+.lobby-actions button { flex: 1; }
+.waiting-text { flex: 1; text-align: center; color: rgba(255, 255, 255, 0.6); font-size: 14px; }
+
+.lobby-loading {
+  min-height: 100vh; display: flex; align-items: center;
+  justify-content: center; color: rgba(255, 255, 255, 0.5);
+}
