@@ -25,6 +25,11 @@ dotnet run --project src/PokerGame.Api/
 
 # Run the console UI
 dotnet run --project src/UI/TexasHoldem.UI.Console/
+
+# Frontend (React + Vite)
+cd frontend && npm install       # first time only
+cd frontend && npm run dev       # dev server at http://localhost:3000 (proxies /gamehub to :5000)
+cd frontend && npm run build     # production build (tsc + vite)
 ```
 
 Note: On ARM64 Macs, .NET 8 is installed via Homebrew at `/opt/homebrew/opt/dotnet@8/libexec`. Set `DOTNET_ROOT` if `dotnet` is not in PATH.
@@ -177,3 +182,48 @@ Phase 2 completed the real-time multiplayer infrastructure. See `PHASE2_PLAN.md`
 - `OnSettingsChanged({ SmallBlind, StartingChips })` *(Phase 2)*
 - `OnGameEnd(GameEndDto)` *(Phase 2)*
 - `OnGameRestarted()` *(Phase 2)*
+
+## Phase 3 Changes (Frontend)
+
+Phase 3 added the React 18 + TypeScript frontend SPA. See `docs/superpowers/plans/2026-03-24-phase3-frontend.md` for the full plan and `docs/superpowers/specs/2026-03-24-phase3-frontend-design.md` for the design spec.
+
+### Frontend Architecture
+- **Framework:** React 18 + TypeScript, built with Vite 8, dev server on port 3000
+- **State management:** Zustand single store (`frontend/src/store/gameStore.ts`)
+- **Real-time:** `@microsoft/signalr` client connecting to `/gamehub` (proxied to backend in dev)
+- **Animations:** Framer Motion for card dealing, flipping, screen transitions
+- **Routing:** React Router v6 with 6 routes: `/`, `/create`, `/join`, `/lobby`, `/game`, `/game-end`
+- **Visual theme:** "Classic Felt" — deep green felt gradient, cream accents (#e8d5a3), pill buttons, warm card shadows
+
+### Frontend File Structure
+```
+frontend/src/
+├── App.tsx                    # BrowserRouter + SignalRProvider + Routes
+├── SignalRProvider.tsx         # Mounts useSignalREvents hook inside router context
+├── main.tsx                   # React root, imports globals.css
+├── types/api.ts               # 13 DTO interfaces (camelCase, matches backend JSON)
+├── services/signalRService.ts # Singleton SignalR client with buffered handler pattern
+├── store/gameStore.ts         # Zustand: connection, lobby, game, turn, timer, game end state
+├── hooks/useSignalR.ts        # 12 SignalR event handlers with state-driven navigation
+├── styles/globals.css         # Classic Felt CSS custom properties + responsive breakpoints
+├── components/
+│   ├── common/                # Button (7 variants), Input (with label/error)
+│   ├── cards/                 # PlayingCard (face/back, 3 sizes, spring animation)
+│   └── players/               # Avatar (emoji, active pulse, folded dim), ChipDisplay
+└── screens/
+    ├── Home/                  # Title + Create/Join buttons
+    ├── CreateGame/            # Name, emoji picker, chips slider → createRoom
+    ├── JoinGame/              # Room code, name, emoji → joinRoom
+    ├── Lobby/                 # Room code display, player list, start/leave
+    ├── GameTable/             # Opponents, community cards, pot, hole cards, bet controls
+    └── GameEnd/               # Winner, standings, play again
+```
+
+### Key Design Decisions (Frontend)
+- **JSON casing:** Backend uses ASP.NET Core default camelCase serialization. All TypeScript interfaces use camelCase (`playerId`, `roomCode`, not PascalCase).
+- **State-driven navigation:** Screen transitions driven by SignalR events (`OnGameStateChanged` phase → `/game`, `OnGameEnd` → `/game-end`, `OnGameRestarted` → `/lobby`), ensuring all players transition together.
+- **Hole card fetch pattern:** Broadcast `OnGameStateChanged` does NOT include hole cards. After receiving broadcast, client calls `getGameState()` to get own hole cards (backend filters per-player).
+- **Buffered handler pattern:** `signalRService.on()` stores handlers in `pendingHandlers` array. When `connect()` runs, pending handlers are applied to the new connection. This allows handlers to be registered before the connection is established.
+- **Event handlers registered once:** All 12 SignalR event handlers are registered in `useSignalREvents()` hook, mounted once via `SignalRProvider` inside `BrowserRouter`. Screens do NOT register their own handlers (prevents duplicate registration).
+- **Turn timeout handling:** `OnGameStateChanged` handler checks if `currentPlayerToActId` changed away from the local player and clears `isMyTurn`, handling auto-fold on timeout without needing a second `OnYourTurn` event.
+- **Mobile-first responsive:** Default styles target 375px+ width, 44px min touch targets, `viewport-fit: cover` for fullscreen feel. Small phone breakpoint at 380px reduces spacing.
