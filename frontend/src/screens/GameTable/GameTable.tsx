@@ -9,7 +9,10 @@ import { signalRService } from '../../services/signalRService'
 import './GameTable.css'
 
 export function GameTableScreen() {
-  const { gameState, isMyTurn, myTurnInfo, turnTimer, playerId, disconnectedPlayerIds } = useGameStore();
+  const {
+    gameState, isMyTurn, myTurnInfo, turnTimer, playerId,
+    disconnectedPlayerIds, prevHandChips, handResultVisible,
+  } = useGameStore();
   const [raiseAmount, setRaiseAmount] = useState(0);
   const [submitting, setSubmitting] = useState(false);
 
@@ -24,6 +27,35 @@ export function GameTableScreen() {
 
   const me = gameState.players.find((p) => p.id === playerId);
   const others = gameState.players.filter((p) => p.id !== playerId);
+
+  // Per-player chip deltas during the HandComplete animation window
+  const deltas: Record<string, number> = {};
+  if (handResultVisible && prevHandChips) {
+    for (const p of gameState.players) {
+      deltas[p.id] = p.chips - (prevHandChips[p.id] ?? p.chips);
+    }
+  }
+
+  // Winner banner text (only used when handResultVisible && gameState.isShowdown)
+  let winnerBannerText = '';
+  if (handResultVisible && gameState.isShowdown) {
+    const winners = gameState.players.filter((p) => (deltas[p.id] ?? 0) > 0);
+    if (winners.length > 0) {
+      const totalWon = winners.reduce((sum, p) => sum + deltas[p.id], 0);
+      const names = winners.map((p) => p.name).join(' + ');
+      winnerBannerText = winners.length === 1
+        ? `* ${names} wins ${totalWon.toLocaleString()} *`
+        : `* ${names} split ${totalWon.toLocaleString()} *`;
+    } else {
+      // Fallback: all deltas zero (perfectly equal split) — derive names from showdownHands keys
+      const showdownIds = Object.keys(gameState.showdownHands ?? {});
+      const showdownNames = gameState.players
+        .filter((p) => showdownIds.includes(p.id))
+        .map((p) => p.name)
+        .join(' + ');
+      winnerBannerText = showdownNames ? `* ${showdownNames} split pot *` : '* Split pot *';
+    }
+  }
 
   const handleAction = async (action: string, amount?: number) => {
     setSubmitting(true);
@@ -47,7 +79,12 @@ export function GameTableScreen() {
               isActive={gameState.currentPlayerToActId === p.id}
               isFolded={p.status === 'Folded'}
               isDisconnected={disconnectedPlayerIds.has(p.id)} />
-            <ChipDisplay amount={p.chips} size="sm" />
+            <ChipDisplay
+              amount={handResultVisible && prevHandChips ? (prevHandChips[p.id] ?? p.chips) : p.chips}
+              animateTo={handResultVisible ? p.chips : undefined}
+              delta={handResultVisible && (deltas[p.id] ?? 0) !== 0 ? deltas[p.id] : undefined}
+              size="sm"
+            />
             {p.currentBet > 0 && <span className="bet-badge">{p.currentBet}</span>}
             {p.status === 'AllIn' && <span className="allin-badge">ALL IN</span>}
             {/* Showdown: show opponent hole cards */}
@@ -68,6 +105,20 @@ export function GameTableScreen() {
           <span className="pot-label">Pot</span>
           <span className="pot-amount">{gameState.mainPot.toLocaleString()}</span>
         </div>
+
+        <AnimatePresence>
+          {handResultVisible && gameState.isShowdown && (
+            <motion.div
+              className="winner-banner"
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.8, opacity: 0 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+            >
+              {winnerBannerText}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <div className="community-cards">
           {(gameState.communityCards || []).map((card, i) => (
@@ -93,7 +144,15 @@ export function GameTableScreen() {
               <PlayingCard key={i} card={card} size="lg" delay={i * 0.15} />
             )) || [<PlayingCard key={0} size="lg" />, <PlayingCard key={1} size="lg" />]}
           </div>
-          <ChipDisplay amount={me?.chips || 0} label="You" size="md" />
+          <ChipDisplay
+            amount={handResultVisible && prevHandChips && me
+              ? (prevHandChips[me.id] ?? me.chips ?? 0)
+              : (me?.chips ?? 0)}
+            animateTo={handResultVisible && me ? me.chips : undefined}
+            delta={handResultVisible && me && (deltas[me.id] ?? 0) !== 0 ? deltas[me.id] : undefined}
+            label="You"
+            size="md"
+          />
         </div>
 
         {/* Betting controls */}

@@ -104,3 +104,19 @@
 @media (max-width: 380px) {
   .card-slot { width: 48px; height: 68px; }
 }
+
+/* Winner banner */
+.winner-banner {
+  background: var(--cream);
+  color: var(--felt-dark);
+  font-weight: 700;
+  font-size: 15px;
+  padding: var(--sp-xs) var(--sp-lg);
+  border-radius: var(--radius-full);
+  text-align: center;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+
+@media (max-width: 380px) {
+  .winner-banner { font-size: 12px; }
+}
