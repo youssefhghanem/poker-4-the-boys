@@ -1,0 +1,41 @@
+.end-screen {
+  min-height: 100vh; min-height: 100dvh;
+  display: flex; align-items: center; justify-content: center;
+  padding: var(--sp-md);
+}
+
+.end-content {
+  max-width: 400px; width: 100%;
+  background: rgba(255, 255, 255, 0.05);
+  padding: var(--sp-lg); border-radius: var(--radius-lg);
+  text-align: center;
+}
+
+.end-title { font-size: 32px; color: var(--cream); margin-bottom: var(--sp-lg); }
+
+.winner-section { margin-bottom: var(--sp-xl); }
+.winner-label { display: block; font-size: 12px; color: var(--cream); margin-bottom: var(--sp-xs); }
+.winner-name { font-size: 28px; font-weight: 700; }
+
+.standings { margin-bottom: var(--sp-lg); text-align: left; }
+.standings-title { font-size: 14px; color: var(--cream); margin-bottom: var(--sp-sm); text-align: center; }
+
+.standing-row {
+  display: flex; align-items: center; gap: var(--sp-md);
+  padding: var(--sp-sm) var(--sp-md);
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-md); margin-bottom: var(--sp-xs);
+}
+.standing-you { background: rgba(232, 213, 163, 0.15); border: 1px solid var(--cream); }
+.standing-pos { font-weight: 700; color: var(--cream); width: 30px; }
+.standing-name { flex: 1; }
+.standing-chips { font-family: var(--font-mono); font-weight: 700; }
+
+.hands-played { font-size: 13px; color: rgba(255, 255, 255, 0.5); margin-bottom: var(--sp-lg); }
+
+.end-actions { display: flex; gap: var(--sp-md); justify-content: center; }
+
+.end-loading {
+  min-height: 100vh; display: flex; align-items: center;
+  justify-content: center; color: rgba(255, 255, 255, 0.5);
+}
