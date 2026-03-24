@@ -29,12 +29,14 @@ export function ChipDisplay({ amount, label, size = 'md', animateTo, delta }: Ch
   }, [animateTo, amount, count]);
 
   return (
-    <div className={`chip-display chip-${size}`}>
-      {label && <span className="chip-label">{label}</span>}
-      {animateTo !== undefined
-        ? <motion.span className="chip-amount">{rounded}</motion.span>
-        : <span className="chip-amount">{amount.toLocaleString()}</span>
-      }
+    <div className="chip-wrapper">
+      <div className={`chip-display chip-${size}`}>
+        {label && <span className="chip-label">{label}</span>}
+        {animateTo !== undefined
+          ? <motion.span className="chip-amount">{rounded}</motion.span>
+          : <span className="chip-amount">{amount.toLocaleString()}</span>
+        }
+      </div>
       {delta !== undefined && delta !== 0 && (
         <div className={`chip-delta ${delta > 0 ? 'chip-delta--win' : 'chip-delta--loss'}`}>
           {delta > 0 ? '+' : ''}{delta.toLocaleString()}
