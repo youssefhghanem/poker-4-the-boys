@@ -382,6 +382,7 @@ namespace PokerGame.Api.Services
 
         private void HandleHandStarted(Room room, ActiveGame gameState, string sessionId, IStartHandContext context)
         {
+            gameState.IsHandComplete = false;       // fires N times per hand; idempotent
             gameState.HandNumber = context.HandNumber;
             gameState.SmallBlind = context.SmallBlind;
             gameState.CommunityCards.Clear();
@@ -449,9 +450,15 @@ namespace PokerGame.Api.Services
             gameState.CurrentPlayerToActId = null;
             gameState.IsShowdown = gameState.ShowdownCards != null && gameState.ShowdownCards.Count > 0;
 
-            this.BroadcastState(room.RoomCode, gameState);
+            // Guard: HandleHandEnded fires once per player — only broadcast and sleep on first invocation.
+            if (!gameState.IsHandComplete)
+            {
+                gameState.IsHandComplete = true;
+                this.BroadcastState(room.RoomCode, gameState);      // HandComplete broadcast
+                System.Threading.Thread.Sleep(2500);                // pause engine thread; clients animate
+            }
 
-            // Clear hand state for next hand
+            // Clear hand state for next hand (runs once per player; all assignments are idempotent).
             gameState.HoleCards.Clear();
             gameState.ShowdownCards = null;
             gameState.IsShowdown = false;
@@ -521,6 +528,8 @@ namespace PokerGame.Api.Services
 
             public bool IsShowdown { get; set; }
 
+            public bool IsHandComplete { get; set; }
+
             public ConcurrentDictionary<string, CancellationTokenSource> TimerCts { get; }
                 = new ConcurrentDictionary<string, CancellationTokenSource>();
 
@@ -529,7 +538,7 @@ namespace PokerGame.Api.Services
                 var dto = new GameStateDto
                 {
                     StateVersion = this.HandNumber,
-                    Phase = "HandInProgress",
+                    Phase = this.IsHandComplete ? "HandComplete" : "HandInProgress",
                     CurrentRound = this.CurrentRound,
                     CommunityCards = this.CommunityCards.Count > 0
                         ? new List<CardDto>(this.CommunityCards)
