@@ -106,7 +106,7 @@ namespace PokerGame.Api.Tests
         {
             // Arrange
             var roomManager = new RoomManager();
-            var wrapper = new GameEngineWrapper();
+            using var wrapper = new GameEngineWrapper();
             var (roomCode, _) = roomManager.CreateRoom("Alice", "😀", 200);
             roomManager.JoinRoom(roomCode, "Bob", "🎯");
             var room = roomManager.GetRoom(roomCode)!;
