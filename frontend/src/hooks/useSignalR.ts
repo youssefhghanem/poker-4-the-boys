@@ -7,7 +7,7 @@ import type { GameStateDto, YourTurnDto, GameEndDto, TurnTimerDto } from '../typ
 export function useSignalREvents() {
   const navigate = useNavigate();
   const {
-    playerId, setGameState, setMyTurn, setTurnTimer,
+    setGameState, setMyTurn, setTurnTimer,
     setGameEndResult, setLobbyState, addDisconnected, removeDisconnected, reset,
   } = useGameStore();
 
@@ -18,6 +18,12 @@ export function useSignalREvents() {
     unsubs.push(signalRService.on<GameStateDto>('OnGameStateChanged', async (broadcast) => {
       // Update with broadcast first (no hole cards)
       setGameState(broadcast);
+
+      // Clear isMyTurn if it's no longer our turn (e.g. timeout auto-fold)
+      const store = useGameStore.getState();
+      if (store.isMyTurn && broadcast.currentPlayerToActId !== store.playerId) {
+        setMyTurn(false, null);
+      }
 
       // Fetch full state with our hole cards
       const fullState = await signalRService.getGameState();
@@ -88,5 +94,5 @@ export function useSignalREvents() {
     }));
 
     return () => unsubs.forEach((fn) => fn());
-  }, [navigate, playerId, setGameState, setMyTurn, setTurnTimer, setGameEndResult, setLobbyState, addDisconnected, removeDisconnected, reset]);
+  }, [navigate, setGameState, setMyTurn, setTurnTimer, setGameEndResult, setLobbyState, addDisconnected, removeDisconnected, reset]);
 }
