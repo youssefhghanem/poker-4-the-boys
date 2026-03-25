@@ -36,6 +36,11 @@
   align-items: center; justify-content: center; gap: var(--sp-md);
 }
 
+.pot-row {
+  display: flex; align-items: center; justify-content: center;
+  gap: var(--sp-sm); flex-wrap: wrap;
+}
+
 .pot-display {
   display: flex; align-items: center; gap: var(--sp-sm);
   background: rgba(0, 0, 0, 0.4);
@@ -43,8 +48,8 @@
   border-radius: var(--radius-full);
   border: 1.5px solid var(--cream);
 }
-.pot-label { font-size: 12px; color: var(--cream); }
-.pot-amount { font-size: 20px; font-family: var(--font-mono); font-weight: 700; }
+.pot-label { font-size: 13px; color: var(--cream); }
+.pot-amount { font-size: 24px; font-family: var(--font-mono); font-weight: 700; }
 
 .community-cards { display: flex; gap: var(--sp-xs); justify-content: center; }
 
@@ -103,4 +108,5 @@
 
 @media (max-width: 380px) {
   .card-slot { width: 48px; height: 68px; }
+  .pot-amount { font-size: 20px; }
 }

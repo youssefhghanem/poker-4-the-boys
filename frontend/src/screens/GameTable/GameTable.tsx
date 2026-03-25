@@ -72,11 +72,6 @@ export function GameTableScreen() {
 
       {/* Table center */}
       <div className="table-center">
-        <div className="pot-display">
-          <span className="pot-label">Pot</span>
-          <span className="pot-amount">{gameState.mainPot.toLocaleString()}</span>
-        </div>
-
         <div className="community-cards">
           {(gameState.communityCards || []).map((card, i) => (
             <PlayingCard key={i} card={card} size="md" delay={i * 0.12} />
@@ -84,6 +79,19 @@ export function GameTableScreen() {
           {/* Empty slots for undealt cards */}
           {Array.from({ length: Math.max(0, 5 - (gameState.communityCards?.length || 0)) }).map((_, i) => (
             <div key={`empty-${i}`} className="card-slot" />
+          ))}
+        </div>
+
+        <div className="pot-row">
+          <div className="pot-display">
+            <span className="pot-label">{(gameState.sidePots?.length ?? 0) > 0 ? 'Main' : 'Pot'}</span>
+            <span className="pot-amount">{gameState.mainPot.toLocaleString()}</span>
+          </div>
+          {gameState.sidePots?.map((sp, i) => (
+            <div key={i} className="pot-display">
+              <span className="pot-label">Side</span>
+              <span className="pot-amount">{sp.amount.toLocaleString()}</span>
+            </div>
           ))}
         </div>
 
