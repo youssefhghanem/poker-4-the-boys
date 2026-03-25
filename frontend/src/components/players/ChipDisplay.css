@@ -15,6 +15,12 @@
 .chip-wrapper-sm .chip-stake { font-size: 11px; }
 .chip-wrapper-md .chip-stake { font-size: 13px; }
 
+.chip-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
 .chip-display {
   display: flex;
   align-items: center;
@@ -41,3 +47,20 @@
 
 .chip-sm .chip-amount { font-size: 11px; }
 .chip-md .chip-amount { font-size: 14px; }
+
+.chip-delta {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  text-align: center;
+  margin-top: 2px;
+  opacity: 0;
+  animation: delta-fade-in 0.3s ease 1.5s forwards;
+}
+
+.chip-delta--win  { color: #4caf50; }
+.chip-delta--loss { color: #ef5350; }
+
+@keyframes delta-fade-in {
+  to { opacity: 1; }
+}

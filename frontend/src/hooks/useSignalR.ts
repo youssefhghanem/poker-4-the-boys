@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { signalRService } from '../services/signalRService'
 import { useGameStore } from '../store/gameStore'
@@ -9,7 +9,10 @@ export function useSignalREvents() {
   const {
     setGameState, setMyTurn, setTurnTimer,
     setGameEndResult, setLobbyState, addDisconnected, removeDisconnected, reset,
+    setPrevHandChips, setHandResultVisible,
   } = useGameStore();
+
+  const prevHandNumberRef = useRef<number>(-1);
 
   useEffect(() => {
     const unsubs: (() => void)[] = [];
@@ -28,6 +31,19 @@ export function useSignalREvents() {
       // Fetch full state with our hole cards
       const fullState = await signalRService.getGameState();
       if (fullState) setGameState(fullState);
+
+      // Winning animation: snapshot chips at hand start, set/clear result visibility
+      if (broadcast.phase === 'HandInProgress') {
+        if (broadcast.handNumber !== prevHandNumberRef.current) {
+          prevHandNumberRef.current = broadcast.handNumber;
+          setPrevHandChips(
+            Object.fromEntries(broadcast.players.map((p) => [p.id, p.chips]))
+          );
+        }
+        setHandResultVisible(false);
+      } else if (broadcast.phase === 'HandComplete' && broadcast.isShowdown) {
+        setHandResultVisible(true);
+      }
 
       // State-driven navigation
       if (broadcast.phase === 'HandInProgress') {
@@ -94,5 +110,6 @@ export function useSignalREvents() {
     }));
 
     return () => unsubs.forEach((fn) => fn());
-  }, [navigate, setGameState, setMyTurn, setTurnTimer, setGameEndResult, setLobbyState, addDisconnected, removeDisconnected, reset]);
+  }, [navigate, setGameState, setMyTurn, setTurnTimer, setGameEndResult, setLobbyState,
+      addDisconnected, removeDisconnected, reset, setPrevHandChips, setHandResultVisible]);
 }

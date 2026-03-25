@@ -1,7 +1,9 @@
 namespace PokerGame.Api.Tests
 {
     using System;
+    using System.Linq;
 
+    using PokerGame.Api.DTOs;
     using PokerGame.Api.Services;
 
     using Xunit;
@@ -97,6 +99,56 @@ namespace PokerGame.Api.Tests
             // Either not their turn, or invalid raise amount
             Assert.False(success);
             Assert.NotNull(error);
+        }
+
+        [Fact]
+        public void HandleHandEnded_ShowdownHand_BroadcastsHandCompletePhase()
+        {
+            // Arrange
+            var roomManager = new RoomManager();
+            using var wrapper = new GameEngineWrapper();
+            var (roomCode, _) = roomManager.CreateRoom("Alice", "😀", 200);
+            roomManager.JoinRoom(roomCode, "Bob", "🎯");
+            var room = roomManager.GetRoom(roomCode)!;
+
+            var broadcastPhases = new System.Collections.Concurrent.ConcurrentBag<string>();
+            wrapper.GameStateChanged += (_, dto) => broadcastPhases.Add(dto.Phase);
+
+            // Act
+            wrapper.StartGameAsync(room);
+
+            // Poll until first player needs to act (max 2s)
+            GameStateDto? state = null;
+            for (int i = 0; i < 20 && state?.CurrentPlayerToActId == null; i++)
+            {
+                System.Threading.Thread.Sleep(100);
+                state = wrapper.GetGameState(roomCode);
+            }
+
+            Assert.NotNull(state?.CurrentPlayerToActId);
+            wrapper.SubmitAction(state!.CurrentPlayerToActId!, "AllIn", null);
+
+            // Poll until second player needs to act (max 2s)
+            state = null;
+            for (int i = 0; i < 20 && state?.CurrentPlayerToActId == null; i++)
+            {
+                System.Threading.Thread.Sleep(100);
+                state = wrapper.GetGameState(roomCode);
+            }
+
+            if (state?.CurrentPlayerToActId != null)
+            {
+                wrapper.SubmitAction(state.CurrentPlayerToActId, "AllIn", null);
+            }
+
+            // Poll until HandComplete appears in broadcastPhases (max 3s)
+            for (int i = 0; i < 30 && !broadcastPhases.Contains("HandComplete"); i++)
+            {
+                System.Threading.Thread.Sleep(100);
+            }
+
+            // Assert
+            Assert.Contains("HandComplete", broadcastPhases);
         }
 
         public void Dispose()
