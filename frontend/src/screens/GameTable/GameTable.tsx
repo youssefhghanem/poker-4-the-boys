@@ -18,6 +18,14 @@ export function GameTableScreen() {
     if (myTurnInfo) setRaiseAmount(myTurnInfo.minRaise);
   }, [myTurnInfo]);
 
+  // Auto-fold when timer expires: hide controls immediately, submit fold (server may already have processed it)
+  useEffect(() => {
+    if (turnTimer !== 0 || !isMyTurn) return;
+    useGameStore.getState().setMyTurn(false, null);
+    useGameStore.getState().setTurnTimer(null);
+    signalRService.submitAction('Fold').catch(() => {});
+  }, [turnTimer, isMyTurn]);
+
   if (!gameState) {
     return <div className="table-loading">Loading game...</div>;
   }
