@@ -227,3 +227,15 @@ frontend/src/
 - **Event handlers registered once:** All 12 SignalR event handlers are registered in `useSignalREvents()` hook, mounted once via `SignalRProvider` inside `BrowserRouter`. Screens do NOT register their own handlers (prevents duplicate registration).
 - **Turn timeout handling:** `OnGameStateChanged` handler checks if `currentPlayerToActId` changed away from the local player and clears `isMyTurn`, handling auto-fold on timeout without needing a second `OnYourTurn` event.
 - **Mobile-first responsive:** Default styles target 375px+ width, 44px min touch targets, `viewport-fit: cover` for fullscreen feel. Small phone breakpoint at 380px reduces spacing.
+
+## Bug Fix: Side Pot Display (fix/pot-display → master, PR #3)
+
+Added support for displaying side pots in addition to the main pot on the game table.
+
+**Problem:** The frontend only displayed the main pot (`gameState.mainPot`) without showing side pots that occur when players go all-in at different levels.
+
+**Fix:** Updated `GameTable.tsx` and `GameTable.css` to:
+- Display pots in a row below community cards using a new `.pot-row` container
+- Show "Main" label when side pots exist, otherwise show "Pot"
+- Loop through `gameState.sidePots` and display each with "Side" label
+- Increase pot amount font size from 20px to 24px (desktop) and 20px (mobile)
