@@ -1,3 +1,20 @@
+.chip-display-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.chip-stake {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--cream);
+  line-height: 1;
+}
+
+.chip-wrapper-sm .chip-stake { font-size: 11px; }
+.chip-wrapper-md .chip-stake { font-size: 13px; }
+
 .chip-display {
   display: flex;
   align-items: center;

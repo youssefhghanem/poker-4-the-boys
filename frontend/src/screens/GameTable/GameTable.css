@@ -16,12 +16,6 @@
   gap: 2px; position: relative;
 }
 
-.bet-badge {
-  font-size: 10px; font-family: var(--font-mono); font-weight: 700;
-  background: var(--cream); color: var(--felt-dark);
-  padding: 1px 5px; border-radius: var(--radius-sm);
-}
-
 .allin-badge {
   font-size: 9px; font-weight: 700;
   background: linear-gradient(135deg, var(--cream), #c4a76e);
