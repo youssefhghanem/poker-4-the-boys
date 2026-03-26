@@ -300,6 +300,26 @@ namespace PokerGame.Api.Services
             // Cancel any leftover timer from previous turn (handles TcsPlayer timeout case)
             this.CancelAllTimers(gameState);
 
+            // Back-fill the previous player's bet from the pot delta.
+            // HandleTurnRequested fires BEFORE the current player acts, so the player who
+            // just acted (gameState.CurrentPlayerToActId) was never updated after their raise.
+            // The pot delta reveals exactly how much they added since the last broadcast.
+            var prevPlayerId = gameState.CurrentPlayerToActId;
+            if (prevPlayerId != null && prevPlayerId != sessionId)
+            {
+                var potDelta = context.CurrentPot - gameState.MainPot;
+                if (potDelta > 0)
+                {
+                    var prevSession = room.Players.FirstOrDefault(p => p.Id == prevPlayerId);
+                    if (prevSession != null)
+                    {
+                        prevSession.CurrentBet += potDelta;
+                        prevSession.TotalBetThisHand += potDelta;
+                        prevSession.Chips = Math.Max(0, prevSession.Chips - potDelta);
+                    }
+                }
+            }
+
             gameState.CurrentPlayerToActId = sessionId;
 
             // Build turn info from engine context
@@ -342,6 +362,9 @@ namespace PokerGame.Api.Services
             var session = room.Players.FirstOrDefault(p => p.Id == sessionId);
             if (session != null)
             {
+                // Calculate the incremental bet amount and add to cumulative total
+                var betDelta = context.MyMoneyInTheRound - session.CurrentBet;
+                session.TotalBetThisHand += betDelta;
                 session.Chips = context.MoneyLeft;
                 session.CurrentBet = context.MyMoneyInTheRound;
                 session.Status = PlayerStatus.Active;
@@ -403,6 +426,7 @@ namespace PokerGame.Api.Services
             {
                 session.Chips = context.MoneyLeft;
                 session.CurrentBet = 0;
+                session.TotalBetThisHand = 0;
                 session.Status = PlayerStatus.Active;
                 gameState.ChipsAtHandStart[sessionId] = context.MoneyLeft;
             }
@@ -413,6 +437,25 @@ namespace PokerGame.Api.Services
 
         private void HandleRoundStarted(Room room, ActiveGame gameState, IStartRoundContext context)
         {
+            // Capture the last player's bet before resetting. The player who called/checked
+            // to end the previous round is never covered by HandleTurnRequested (no next
+            // player fires for them); the pot delta here is exactly what they added.
+            var lastActorId = gameState.CurrentPlayerToActId;
+            if (lastActorId != null)
+            {
+                var potDelta = context.CurrentPot - gameState.MainPot;
+                if (potDelta > 0)
+                {
+                    var lastSession = room.Players.FirstOrDefault(p => p.Id == lastActorId);
+                    if (lastSession != null)
+                    {
+                        lastSession.TotalBetThisHand += potDelta;
+                        lastSession.Chips = Math.Max(0, lastSession.Chips - potDelta);
+                    }
+                }
+            }
+
+            gameState.CurrentPlayerToActId = null;
             gameState.CurrentRound = context.RoundType.ToString();
             gameState.MainPot = context.CurrentPot;
             gameState.CommunityCards = context.CommunityCards
@@ -568,6 +611,7 @@ namespace PokerGame.Api.Services
                     Chips = p.Chips,
                     Status = p.Status.ToString(),
                     CurrentBet = p.CurrentBet,
+                    TotalBetThisHand = p.TotalBetThisHand,
                     IsHost = p.IsHost,
                     Position = i,
                 }).ToList();

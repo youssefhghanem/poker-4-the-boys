@@ -239,3 +239,39 @@ Added support for displaying side pots in addition to the main pot on the game t
 - Show "Main" label when side pots exist, otherwise show "Pot"
 - Loop through `gameState.sidePots` and display each with "Side" label
 - Increase pot amount font size from 20px to 24px (desktop) and 20px (mobile)
+
+## Bug Fix: At-Stake Display (fix/at-stake-display → master, PR #4)
+
+Added at-stake bet amount display above each player's chip display.
+
+**Problem:** Players couldn't see how much each opponent had bet in the current round - only their own chips were visible.
+
+**Fix:** Updated `ChipDisplay.tsx` and `ChipDisplay.css` to:
+- Add `atStake` prop to `ChipDisplay` component
+- Display current bet amount above chip stack when `atStake > 0`
+- Apply consistent styling using `.chip-stake` class with mono font
+- Simplified `GameTable.tsx` by removing inline bet-badge rendering logic
+
+**Files changed:**
+- `frontend/src/components/players/ChipDisplay.css` - Added `.chip-display-wrapper`, `.chip-stake` styles
+- `frontend/src/components/players/ChipDisplay.tsx` - Added `atStake` prop support
+- `frontend/src/screens/GameTable/GameTable.tsx` - Pass `atStake={p.currentBet}` to ChipDisplay
+- `frontend/src/screens/GameTable/GameTable.css` - Removed obsolete `.bet-badge` styles
+
+## Feature: Winning Animation (fix/winning-animation → master, PR #51)
+
+Added winning animation with pause, chip counters, and winner banner after each hand showdown.
+
+**What was added:**
+- **Backend**: broadcasts `HandComplete` phase after showdown with 2.5s pause before next hand
+- **Chip counter animation**: Framer Motion counter animates chips up/down over 1.8s; delta badge (+N/-N) fades in near end
+- **Winner banner**: shows winner(s) and pot amount during animation; handles single winner, split pot, and equal-split
+
+**Files changed:**
+- `src/PokerGame.Api/Services/GameEngineWrapper.cs` - Added `IsHandComplete` flag, `HandComplete` phase broadcast, 2.5s post-showdown delay
+- `frontend/src/store/gameStore.ts` - Added `prevHandChips`, `handResultVisible` state
+- `frontend/src/hooks/useSignalR.ts` - Snapshot chips on `HandInProgress`, set/clear `handResultVisible` on phase changes
+- `frontend/src/components/players/ChipDisplay.tsx` - Added `animateTo`, `delta` props with Framer Motion counter
+- `frontend/src/components/players/ChipDisplay.css` - Added `.chip-delta` styles
+- `frontend/src/screens/GameTable/GameTable.tsx` - Added `WinnerBanner` component, delta computation, wired animation props
+- `frontend/src/screens/GameTable/GameTable.css` - Added `.winner-banner` styles

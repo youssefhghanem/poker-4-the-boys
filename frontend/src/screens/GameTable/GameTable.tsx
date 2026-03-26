@@ -92,9 +92,8 @@ export function GameTableScreen() {
               animateTo={handResultVisible ? p.chips : undefined}
               delta={handResultVisible && (deltas[p.id] ?? 0) !== 0 ? deltas[p.id] : undefined}
               size="sm"
-              atStake={p.currentBet}
+              atStake={p.totalBetThisHand}
             />
-            {p.currentBet > 0 && <span className="bet-badge">{p.currentBet}</span>}
             {p.status === 'AllIn' && <span className="allin-badge">ALL IN</span>}
             {/* Showdown: show opponent hole cards */}
             {gameState.isShowdown && gameState.showdownHands?.[p.id] && (
@@ -174,7 +173,7 @@ export function GameTableScreen() {
             delta={handResultVisible && me && (deltas[me.id] ?? 0) !== 0 ? deltas[me.id] : undefined}
             label="You"
             size="md"
-            atStake={me?.currentBet}
+            atStake={me?.totalBetThisHand}
           />
         </div>
 

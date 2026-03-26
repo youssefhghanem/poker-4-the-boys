@@ -63,6 +63,8 @@ namespace PokerGame.Api.DTOs
 
         public int CurrentBet { get; set; }
 
+        public int TotalBetThisHand { get; set; }
+
         public bool IsHost { get; set; }
 
         public int Position { get; set; }

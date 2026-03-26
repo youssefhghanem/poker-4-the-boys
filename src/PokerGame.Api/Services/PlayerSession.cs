@@ -20,6 +20,8 @@ namespace PokerGame.Api.Services
 
         public int CurrentBet { get; set; }
 
+        public int TotalBetThisHand { get; set; }
+
         public bool IsDisconnected { get; set; }
 
         public DateTime? DisconnectedAt { get; set; }

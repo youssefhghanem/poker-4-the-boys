@@ -13,6 +13,7 @@ export interface PlayerInfoDto {
   chips: number;
   status: string; // "SittingOut" | "Active" | "Folded" | "AllIn" | "Eliminated"
   currentBet: number;
+  totalBetThisHand: number;
   isHost: boolean;
   position: number;
   holeCards?: CardDto[];
